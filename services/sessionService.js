@@ -58,6 +58,47 @@ const normalizeDate = (value) => {
   return Number.isNaN(dateValue.getTime()) ? value : dateValue;
 };
 
+const buildDayRange = (value) => {
+  const dateValue = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(dateValue.getTime())) {
+    const error = new Error("Date invalide");
+    error.status = 400;
+    throw error;
+  }
+
+  const start = new Date(dateValue);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(dateValue);
+  end.setHours(23, 59, 59, 999);
+
+  return { start, end };
+};
+
+const ensureNoSessionConflict = async ({ date, sessionTime, excludeId }) => {
+  if (!date || !sessionTime) {
+    return;
+  }
+
+  const { start, end } = buildDayRange(date);
+  const query = {
+    date: { $gte: start, $lte: end },
+    sessionTime,
+  };
+
+  if (excludeId) {
+    query._id = { $ne: excludeId };
+  }
+
+  const existing = await Session.findOne(query).select("_id");
+  if (existing) {
+    const error = new Error(
+      "Une séance est déjà programmée à cette date et cette heure"
+    );
+    error.status = 409;
+    throw error;
+  }
+};
+
 const parseOverrides = (overrides) => {
   if (overrides === undefined) {
     return undefined;
@@ -355,6 +396,11 @@ const createSession = async ({ payload, createdBy }) => {
     validatePricingOverrides(data.pricingOverrides);
   }
 
+  await ensureNoSessionConflict({
+    date: data.date,
+    sessionTime: data.sessionTime,
+  });
+
   await ensureEventVersion(data.eventId, data.version);
 
   const session = await Session.create({
@@ -375,14 +421,19 @@ const listSessionsPopulatedEveent = async ({
   from,
   to,
   status,
+  orderBy,
 } = {}) => {
   const filters = buildSessionFilters({ from, to, status });
   const skip = (page - 1) * limit;
+  const sort =
+    orderBy === "createdAt"
+      ? { createdAt: -1 }
+      : { date: 1, sessionTime: 1 };
 
   const [sessions, total] = await Promise.all([
     Session.find(filters)
       .populate("eventId", "name poster")
-      .sort({ date: 1 })
+      .sort(sort)
       .skip(skip)
       .limit(limit),
     Session.countDocuments(filters),
@@ -530,7 +581,9 @@ const updateSession = async (id, payload) => {
     validatePricingOverrides(data.pricingOverrides);
   }
 
-  const existing = await Session.findById(id).select("eventId version");
+  const existing = await Session.findById(id).select(
+    "eventId version date sessionTime"
+  );
   if (!existing) {
     const error = new Error("Session not found");
     error.status = 404;
@@ -542,6 +595,14 @@ const updateSession = async (id, payload) => {
   if (data.eventId || data.version) {
     await ensureEventVersion(targetEventId, targetVersion);
   }
+
+  const targetDate = data.date || existing.date;
+  const targetSessionTime = data.sessionTime || existing.sessionTime;
+  await ensureNoSessionConflict({
+    date: targetDate,
+    sessionTime: targetSessionTime,
+    excludeId: id,
+  });
 
   if (
     data.totalSeats !== undefined &&

@@ -52,6 +52,7 @@ const listSessionsPopulatedEveent = async (req, res) => {
       from: req.query.from,
       to: req.query.to,
       status: req.query.status,
+      orderBy: req.query.orderBy,
     });
 
     return res.status(200).json(result);
