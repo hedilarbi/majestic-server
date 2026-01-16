@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 
 const Event = require("../models/Event");
 const ALAffiche = require("../models/ALAffiche");
+const ShowType = require("../models/ShowType");
 const Session = require("../models/Session");
 const HomeHero = require("../models/HomeHero");
 const { uploadImage } = require("./firebaseStorageService");
@@ -183,7 +184,13 @@ const createEvent = async ({ payload, file, createdBy }) => {
   return event;
 };
 
-const listEvents = async ({ page = 1, limit = 20, name, type, status } = {}) => {
+const listEvents = async ({
+  page = 1,
+  limit = 20,
+  name,
+  type,
+  status,
+} = {}) => {
   const filters = buildFilters({ name, type, status });
   const skip = (page - 1) * limit;
 
@@ -308,8 +315,10 @@ const getEventsWithALAffiche = async ({ type, genre }) => {
     availableTo: { $gte: now },
   };
 
+  const normalizedType = type ? normalizeEnumValue(type) : undefined;
+
   if (type) {
-    filters.type = normalizeEnumValue(type);
+    filters.type = normalizedType;
   }
 
   if (genre) {
@@ -319,12 +328,13 @@ const getEventsWithALAffiche = async ({ type, genre }) => {
     }
   }
 
-  const [events, aLaffiche] = await Promise.all([
+  const [events, aLaffiche, showTypes] = await Promise.all([
     Event.find(filters).sort({ availableFrom: 1 }),
     ALAffiche.find().populate("eventId").sort({ createdAt: -1 }),
+    normalizedType === "show" ? ShowType.find().sort({ name: 1 }) : [],
   ]);
 
-  return { events, aLaffiche };
+  return { events, aLaffiche, showTypes };
 };
 
 module.exports = {
