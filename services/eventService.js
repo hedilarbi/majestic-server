@@ -296,7 +296,9 @@ const getHomeContent = async () => {
     Event.find({ status: "active", availableFrom: { $gt: now } }).sort({
       availableFrom: 1,
     }),
-    HomeHero.find({ active: true }).sort({ order: 1, createdAt: -1 }),
+    HomeHero.find({ active: true })
+      .populate("eventId")
+      .sort({ order: 1, createdAt: -1 }),
   ]);
 
   return {
