@@ -1,7 +1,6 @@
 const mongoose = require("mongoose");
 
 const Event = require("../models/Event");
-const ALAffiche = require("../models/ALAffiche");
 const ShowType = require("../models/ShowType");
 const Session = require("../models/Session");
 const HomeHero = require("../models/HomeHero");
@@ -284,15 +283,27 @@ const deleteEvent = async (id) => {
 
 const getHomeContent = async () => {
   const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const activeWindow = {
     status: "active",
     availableFrom: { $lte: now },
     availableTo: { $gte: now },
   };
 
+  const sessionEventIds = await Session.distinct("eventId", {
+    date: { $gte: startOfToday },
+  });
+  const sessionFilter = sessionEventIds.length
+    ? { _id: { $in: sessionEventIds } }
+    : { _id: { $in: [] } };
+
   const [movies, shows, upcoming, homeSlider] = await Promise.all([
-    Event.find({ ...activeWindow, type: "movie" }).sort({ availableFrom: 1 }),
-    Event.find({ ...activeWindow, type: "show" }).sort({ availableFrom: 1 }),
+    Event.find({ ...activeWindow, ...sessionFilter, type: "movie" }).sort({
+      availableFrom: 1,
+    }),
+    Event.find({ ...activeWindow, ...sessionFilter, type: "show" }).sort({
+      availableFrom: 1,
+    }),
     Event.find({ status: "active", availableFrom: { $gt: now } }).sort({
       availableFrom: 1,
     }),
@@ -311,32 +322,53 @@ const getHomeContent = async () => {
 
 const getEventsWithALAffiche = async ({ type, genre }) => {
   const now = new Date();
-  const filters = {
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const baseFilters = {
     status: "active",
-    availableFrom: { $lte: now },
-    availableTo: { $gte: now },
   };
 
   const normalizedType = type ? normalizeEnumValue(type) : undefined;
 
   if (type) {
-    filters.type = normalizedType;
+    baseFilters.type = normalizedType;
   }
 
   if (genre) {
     const genreList = normalizeArray(genre);
     if (Array.isArray(genreList) && genreList.length > 0) {
-      filters.genres = { $in: genreList };
+      baseFilters.genres = { $in: genreList };
     }
   }
 
-  const [events, aLaffiche, showTypes] = await Promise.all([
-    Event.find(filters).sort({ availableFrom: 1 }),
-    ALAffiche.find().populate("eventId").sort({ createdAt: -1 }),
+  const activeWindowFilters = {
+    ...baseFilters,
+    availableFrom: { $lte: now },
+    availableTo: { $gte: now },
+  };
+
+  const upcomingFilters = {
+    ...baseFilters,
+    availableFrom: { $gt: now },
+  };
+
+  const [sessionEventIds, aLaffiche, showTypes] = await Promise.all([
+    Session.distinct("eventId", { date: { $gte: startOfToday } }),
+    HomeHero.findOne({ eventAffiche: true, active: true }).populate("eventId"),
     normalizedType === "show" ? ShowType.find().sort({ name: 1 }) : [],
   ]);
 
-  return { events, aLaffiche, showTypes };
+  const eventsPromise = sessionEventIds.length
+    ? Event.find({ ...activeWindowFilters, _id: { $in: sessionEventIds } }).sort({
+        availableFrom: 1,
+      })
+    : Promise.resolve([]);
+
+  const [events, prochainement] = await Promise.all([
+    eventsPromise,
+    Event.find(upcomingFilters).sort({ availableFrom: 1 }),
+  ]);
+
+  return { events, prochainement, aLaffiche, showTypes };
 };
 
 module.exports = {

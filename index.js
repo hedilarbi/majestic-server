@@ -13,7 +13,7 @@ const roomRoutes = require("./routes/rooms");
 const sessionRoutes = require("./routes/sessions");
 const showTypeRoutes = require("./routes/show-types");
 const homeHeroRoutes = require("./routes/home-hero");
-const aLafficheRoutes = require("./routes/a-laffiche");
+
 require("dotenv/config");
 
 const { createServer } = require("http");
@@ -37,7 +37,6 @@ app.use("/rooms", roomRoutes);
 app.use("/sessions", sessionRoutes);
 app.use("/show-types", showTypeRoutes);
 app.use("/home-hero", homeHeroRoutes);
-app.use("/a-laffiche", aLafficheRoutes);
 
 mongoose.connect(process.env.DB_CONNECTION);
 

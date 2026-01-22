@@ -79,6 +79,18 @@ const swapHomeHeroOrder = async (req, res) => {
   }
 };
 
+const setHomeHeroEventAffiche = async (req, res) => {
+  try {
+    const hero = await homeHeroService.setHomeHeroEventAffiche(req.params.id);
+    return res.status(200).json({ hero });
+  } catch (error) {
+    const status = error.status || 500;
+    return res
+      .status(status)
+      .json({ message: error.message || "Server error" });
+  }
+};
+
 module.exports = {
   createHomeHero,
   listHomeHeroes,
@@ -86,4 +98,5 @@ module.exports = {
   updateHomeHero,
   deleteHomeHero,
   swapHomeHeroOrder,
+  setHomeHeroEventAffiche,
 };

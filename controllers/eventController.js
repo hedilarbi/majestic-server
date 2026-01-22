@@ -108,6 +108,7 @@ const getEventsWithALAffiche = async (req, res) => {
       type: req.query.type,
       genre: req.query.genre,
     });
+
     return res.status(200).json(result);
   } catch (error) {
     const status = error.status || 500;

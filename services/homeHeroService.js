@@ -142,7 +142,10 @@ const deleteHomeHero = async (id) => {
 };
 
 const swapHomeHeroOrder = async ({ firstId, secondId }) => {
-  if (!mongoose.isValidObjectId(firstId) || !mongoose.isValidObjectId(secondId)) {
+  if (
+    !mongoose.isValidObjectId(firstId) ||
+    !mongoose.isValidObjectId(secondId)
+  ) {
     const error = new Error("Invalid home hero id");
     error.status = 400;
     throw error;
@@ -176,6 +179,30 @@ const swapHomeHeroOrder = async ({ firstId, secondId }) => {
   return { first, second };
 };
 
+const setHomeHeroEventAffiche = async (id) => {
+  if (!mongoose.isValidObjectId(id)) {
+    const error = new Error("Invalid home hero id");
+    error.status = 400;
+    throw error;
+  }
+
+  const hero = await HomeHero.findById(id);
+  if (!hero) {
+    const error = new Error("Home hero not found");
+    error.status = 404;
+    throw error;
+  }
+
+  await HomeHero.updateMany({ _id: { $ne: id } }, { eventAffiche: false });
+
+  if (!hero.eventAffiche) {
+    hero.eventAffiche = true;
+    await hero.save();
+  }
+
+  return hero;
+};
+
 module.exports = {
   createHomeHero,
   listHomeHeroes,
@@ -183,4 +210,5 @@ module.exports = {
   updateHomeHero,
   deleteHomeHero,
   swapHomeHeroOrder,
+  setHomeHeroEventAffiche,
 };
