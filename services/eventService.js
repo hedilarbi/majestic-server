@@ -283,7 +283,6 @@ const deleteEvent = async (id) => {
 
 const getHomeContent = async () => {
   const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const activeWindow = {
     status: "active",
     availableFrom: { $lte: now },
@@ -291,7 +290,7 @@ const getHomeContent = async () => {
   };
 
   const sessionEventIds = await Session.distinct("eventId", {
-    date: { $gte: startOfToday },
+    status: "in_progress",
   });
   const sessionFilter = sessionEventIds.length
     ? { _id: { $in: sessionEventIds } }
@@ -322,7 +321,6 @@ const getHomeContent = async () => {
 
 const getEventsWithALAffiche = async ({ type, genre }) => {
   const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const baseFilters = {
     status: "active",
   };
@@ -351,9 +349,21 @@ const getEventsWithALAffiche = async ({ type, genre }) => {
     availableFrom: { $gt: now },
   };
 
+  const afficheFilter = { active: true };
+  if (normalizedType === "movie") {
+    afficheFilter.movieAffiche = true;
+  } else if (normalizedType === "show") {
+    afficheFilter.showAffiche = true;
+  }
+
+  const aLaffichePromise =
+    normalizedType === "movie" || normalizedType === "show"
+      ? HomeHero.findOne(afficheFilter).populate("eventId")
+      : Promise.resolve(null);
+
   const [sessionEventIds, aLaffiche, showTypes] = await Promise.all([
-    Session.distinct("eventId", { date: { $gte: startOfToday } }),
-    HomeHero.findOne({ eventAffiche: true, active: true }).populate("eventId"),
+    Session.distinct("eventId", { status: "in_progress" }),
+    aLaffichePromise,
     normalizedType === "show" ? ShowType.find().sort({ name: 1 }) : [],
   ]);
 

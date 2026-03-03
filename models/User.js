@@ -21,7 +21,7 @@ const UserSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ["customer", "admin", "ticket_office", "door_staff"],
+      enum: ["customer", "admin", "ticket_office", "door_staff", "guest"],
     },
     roleDetails: {
       isActive: {
@@ -37,9 +37,20 @@ const UserSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ["active", "suspended"],
+      default: "active",
+    },
+    emailVerified: {
+      type: Boolean,
+      default: false,
+    },
+    lastSeenAt: {
+      type: Date,
+    },
+    expiredAt: {
+      type: Date,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 UserSchema.index({ role: 1, "roleDetails.isActive": 1 });

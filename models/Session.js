@@ -2,14 +2,19 @@ const mongoose = require("mongoose");
 
 const pricingLimitSchema = new mongoose.Schema(
   {
-    pricingId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Pricing",
+    name: {
+      type: String,
       required: true,
+      trim: true,
+    },
+    price: {
+      type: Number,
+      required: true,
+      min: 0,
     },
     maxTickets: {
       type: Number,
-      required: true,
+
       min: 0,
     },
     soldCount: {
@@ -18,7 +23,7 @@ const pricingLimitSchema = new mongoose.Schema(
       min: 0,
     },
   },
-  { _id: false }
+  { _id: false },
 );
 const overrideSchema = new mongoose.Schema(
   {
@@ -38,7 +43,28 @@ const overrideSchema = new mongoose.Schema(
       enum: ["blocked", "staff", "chaise"],
     },
   },
-  { _id: false }
+  { _id: false },
+);
+
+const seatStatusSchema = new mongoose.Schema(
+  {
+    row: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    col: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
+    status: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+  },
+  { _id: false },
 );
 
 const pricingOverrideSchema = new mongoose.Schema(
@@ -59,7 +85,7 @@ const pricingOverrideSchema = new mongoose.Schema(
       required: true,
     },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const sessionSchema = new mongoose.Schema(
@@ -98,6 +124,14 @@ const sessionSchema = new mongoose.Schema(
       required: true,
       min: 0,
     },
+    reservedSeats: {
+      type: [seatStatusSchema],
+      default: [],
+    },
+    bookedSeats: {
+      type: [seatStatusSchema],
+      default: [],
+    },
     overrides: {
       type: [overrideSchema],
       default: [],
@@ -121,7 +155,7 @@ const sessionSchema = new mongoose.Schema(
       required: true,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 sessionSchema.index({ eventId: 1, date: 1 });

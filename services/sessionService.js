@@ -92,7 +92,7 @@ const ensureNoSessionConflict = async ({ date, sessionTime, excludeId }) => {
   const existing = await Session.findOne(query).select("_id");
   if (existing) {
     const error = new Error(
-      "Une séance est déjà programmée à cette date et cette heure"
+      "Une séance est déjà programmée à cette date et cette heure",
     );
     error.status = 409;
     throw error;
@@ -148,7 +148,9 @@ const parsePricingOverrides = (pricingOverrides) => {
       }
       return parsed;
     } catch (error) {
-      const parseError = new Error("pricingOverrides must be a valid JSON array");
+      const parseError = new Error(
+        "pricingOverrides must be a valid JSON array",
+      );
       parseError.status = 400;
       throw parseError;
     }
@@ -236,6 +238,25 @@ const normalizeStatus = (value) => {
   return value.trim().toLowerCase();
 };
 
+const combineSessionDateTime = (dateValue, sessionTime) => {
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const timeText = String(sessionTime || "").trim();
+  const timeMatch = timeText.match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+  if (!timeMatch) {
+    return new Date(date);
+  }
+
+  const hours = Number.parseInt(timeMatch[1], 10);
+  const minutes = Number.parseInt(timeMatch[2], 10);
+  const combined = new Date(date);
+  combined.setHours(hours, minutes, 0, 0);
+  return combined;
+};
+
 const parseDateFilter = (value, label) => {
   if (!value) {
     return undefined;
@@ -249,6 +270,51 @@ const parseDateFilter = (value, label) => {
   }
 
   return dateValue;
+};
+
+const normalizeNameFilter = (value) => {
+  if (Array.isArray(value)) {
+    const found = value.find((item) => typeof item === "string" && item.trim());
+    return found ? found.trim() : undefined;
+  }
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+};
+
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const buildGuichetDateFilter = ({ dateFrom, dateTo } = {}) => {
+  const fromDate = parseDateFilter(dateFrom, "dateFrom");
+  const toDate = parseDateFilter(dateTo, "dateTo");
+
+  if (!fromDate && !toDate) {
+    return undefined;
+  }
+
+  if (fromDate && toDate && fromDate > toDate) {
+    const error = new Error("dateFrom must be before dateTo");
+    error.status = 400;
+    throw error;
+  }
+
+  if (fromDate && !toDate) {
+    const { start, end } = buildDayRange(fromDate);
+    return { $gte: start, $lte: end };
+  }
+
+  if (!fromDate && toDate) {
+    const { start, end } = buildDayRange(toDate);
+    return { $gte: start, $lte: end };
+  }
+
+  const { start: startFrom } = buildDayRange(fromDate);
+  const { end: endTo } = buildDayRange(toDate);
+  return { $gte: startFrom, $lte: endTo };
 };
 
 const buildSessionFilters = ({ from, to, status }) => {
@@ -327,7 +393,7 @@ const validatePricingOverrides = (pricingOverrides) => {
   pricingOverrides.forEach((item) => {
     if (!item || !item.row || !item.col || !item.pricingId) {
       const error = new Error(
-        "pricingOverrides requires row, col, and pricingId"
+        "pricingOverrides requires row, col, and pricingId",
       );
       error.status = 400;
       throw error;
@@ -357,7 +423,9 @@ const createSession = async ({ payload, createdBy }) => {
   const data = normalizePayload(payload || {});
 
   if (!data.eventId || !data.date || !data.sessionTime || !data.version) {
-    const error = new Error("eventId, date, sessionTime, and version are required");
+    const error = new Error(
+      "eventId, date, sessionTime, and version are required",
+    );
     error.status = 400;
     throw error;
   }
@@ -384,9 +452,9 @@ const createSession = async ({ payload, createdBy }) => {
     throw error;
   }
 
-  if (data.pricingLimits) {
-    validatePricingLimits(data.pricingLimits);
-  }
+  // if (data.pricingLimits) {
+  //   validatePricingLimits(data.pricingLimits);
+  // }
 
   if (data.overrides) {
     validateOverrides(data.overrides);
@@ -415,6 +483,91 @@ const listSessions = async () => {
   return Session.find().sort({ date: 1 });
 };
 
+const listGuichetSessions = async ({ dateFrom, dateTo, name, status } = {}) => {
+  const filters = {};
+  if (status) {
+    filters.status = status;
+  }
+  const dateFilter = buildGuichetDateFilter({ dateFrom, dateTo });
+  if (dateFilter) {
+    filters.date = dateFilter;
+  }
+
+  const nameFilter = normalizeNameFilter(name);
+  if (nameFilter) {
+    const regex = new RegExp(escapeRegExp(nameFilter), "i");
+    const events = await Event.find({ name: regex }).select("_id");
+    if (events.length === 0) {
+      return [];
+    }
+    filters.eventId = { $in: events.map((event) => event._id) };
+  }
+
+  return Session.find(filters)
+    .populate("eventId", "name poster")
+    .sort({ date: 1, sessionTime: 1 });
+};
+
+const listDoorStaffSessions = async ({ lookaheadMinutes = 90 } = {}) => {
+  const now = new Date();
+  const safeLookahead = Number.isFinite(Number(lookaheadMinutes))
+    ? Math.max(Math.min(Number(lookaheadMinutes), 720), 0)
+    : 90;
+
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(now.getTime() + safeLookahead * 60 * 1000);
+
+  const sessions = await Session.find({
+    date: { $gte: start, $lte: end },
+    status: { $in: ["in_progress", "scheduled"] },
+  })
+    .select("eventId date sessionTime roomId status availableSeats totalSeats")
+    .populate("eventId", "name poster")
+    .sort({ date: 1, sessionTime: 1 })
+    .lean();
+
+  const items = sessions.map((session) => {
+    const event =
+      session.eventId && typeof session.eventId === "object"
+        ? session.eventId
+        : null;
+
+    return {
+      id: session._id ? String(session._id) : null,
+      status: session.status || "",
+      date: session.date || null,
+      sessionTime: session.sessionTime || "",
+      startsAt: combineSessionDateTime(session.date, session.sessionTime),
+      roomId: session.roomId || "",
+      availableSeats: Number.isFinite(Number(session.availableSeats))
+        ? Number(session.availableSeats)
+        : null,
+      totalSeats: Number.isFinite(Number(session.totalSeats))
+        ? Number(session.totalSeats)
+        : null,
+      event: event
+        ? {
+            id: event._id ? String(event._id) : null,
+            name: event.name || "",
+            poster: event.poster || "",
+          }
+        : null,
+    };
+  });
+
+  items.sort((a, b) => {
+    const score = (status) => (status === "in_progress" ? 0 : 1);
+    const diff = score(a.status) - score(b.status);
+    if (diff !== 0) {
+      return diff;
+    }
+    return new Date(a.startsAt || 0).getTime() - new Date(b.startsAt || 0).getTime();
+  });
+
+  return items;
+};
+
 const listSessionsPopulatedEveent = async ({
   page = 1,
   limit = 20,
@@ -426,9 +579,7 @@ const listSessionsPopulatedEveent = async ({
   const filters = buildSessionFilters({ from, to, status });
   const skip = (page - 1) * limit;
   const sort =
-    orderBy === "createdAt"
-      ? { createdAt: -1 }
-      : { date: 1, sessionTime: 1 };
+    orderBy === "createdAt" ? { createdAt: -1 } : { date: 1, sessionTime: 1 };
 
   const [sessions, total] = await Promise.all([
     Session.find(filters)
@@ -469,14 +620,19 @@ const getSessionById = async (id) => {
   return session;
 };
 
-const getSessionsByEventId = async (eventId) => {
+const getSessionsByEventId = async (eventId, { status } = {}) => {
   if (!mongoose.isValidObjectId(eventId)) {
     const error = new Error("Invalid event id");
     error.status = 400;
     throw error;
   }
 
-  return Session.find({ eventId }).sort({ date: 1 });
+  const filters = { eventId };
+  if (status) {
+    filters.status = normalizeStatus(status);
+  }
+
+  return Session.find(filters).sort({ date: 1 });
 };
 
 const getSessionHomeByEventId = async (eventId, { status } = {}) => {
@@ -505,7 +661,7 @@ const getSessionHomeByEventId = async (eventId, { status } = {}) => {
   return { event, sessions };
 };
 
-const listSessionsByDateGrouped = async (dateValue) => {
+const listSessionsByDateGrouped = async (dateValue, { status } = {}) => {
   if (!dateValue) {
     const error = new Error("date query is required");
     error.status = 400;
@@ -524,13 +680,18 @@ const listSessionsByDateGrouped = async (dateValue) => {
   const end = new Date(baseDate);
   end.setHours(23, 59, 59, 999);
 
-  const sessions = await Session.find({
+  const filters = {
     date: { $gte: start, $lte: end },
-  })
+  };
+  if (status) {
+    filters.status = normalizeStatus(status);
+  }
+
+  const sessions = await Session.find(filters)
     .select("date availableSeats sessionTime version eventId")
     .populate(
       "eventId",
-      "name poster genres description duration ageRestriction directedBy trailerLink"
+      "name poster genres description duration ageRestriction directedBy trailerLink",
     )
     .sort({ date: 1 });
 
@@ -582,7 +743,7 @@ const updateSession = async (id, payload) => {
   }
 
   const existing = await Session.findById(id).select(
-    "eventId version date sessionTime"
+    "eventId version date sessionTime",
   );
   if (!existing) {
     const error = new Error("Session not found");
@@ -662,6 +823,8 @@ const deleteSession = async (id) => {
 module.exports = {
   createSession,
   listSessions,
+  listGuichetSessions,
+  listDoorStaffSessions,
   listSessionsPopulatedEveent,
   getSessionById,
   getSessionsByEventId,

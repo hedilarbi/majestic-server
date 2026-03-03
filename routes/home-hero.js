@@ -8,7 +8,8 @@ const {
   updateHomeHero,
   deleteHomeHero,
   swapHomeHeroOrder,
-  setHomeHeroEventAffiche,
+  setHomeHeroMovieAffiche,
+  setHomeHeroShowAffiche,
 } = require("../controllers/homeHeroController");
 const { requireAdmin } = require("../middlewares/auth");
 
@@ -20,7 +21,8 @@ router.get("/:id", getHomeHero);
 
 router.post("/", requireAdmin, upload.single("poster"), createHomeHero);
 router.post("/swap-order", requireAdmin, swapHomeHeroOrder);
-router.put("/:id/event-affiche", requireAdmin, setHomeHeroEventAffiche);
+router.put("/:id/movie-affiche", requireAdmin, setHomeHeroMovieAffiche);
+router.put("/:id/show-affiche", requireAdmin, setHomeHeroShowAffiche);
 router.put("/:id", requireAdmin, upload.single("poster"), updateHomeHero);
 router.delete("/:id", requireAdmin, deleteHomeHero);
 

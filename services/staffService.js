@@ -36,7 +36,7 @@ const buildToken = (user) => {
       email: user.email,
     },
     secret,
-    { expiresIn }
+    { expiresIn },
   );
 };
 
@@ -69,7 +69,7 @@ const createStaff = async ({
   const normalizedRole = normalizeRole(role);
   if (!STAFF_ROLES.includes(normalizedRole)) {
     const error = new Error(
-      "Role must be one of: admin, ticket_office, door_staff"
+      "Role must be one of: admin, ticket_office, door_staff",
     );
     error.status = 400;
     throw error;
@@ -101,6 +101,7 @@ const createStaff = async ({
     phone,
     role: normalizedRole,
     roleDetails,
+    emailVerified: true,
     status: "active",
   });
 
@@ -162,8 +163,201 @@ const getStaffById = async (id) => {
   return sanitizeUser(user);
 };
 
+const updateStaff = async (id, updates) => {
+  if (!id) {
+    const error = new Error("Missing user id");
+    error.status = 401;
+    throw error;
+  }
+
+  if (!mongoose.isValidObjectId(id)) {
+    const error = new Error("Invalid user id");
+    error.status = 400;
+    throw error;
+  }
+
+  const user = await User.findById(id);
+  if (!user) {
+    const error = new Error("User not found");
+    error.status = 404;
+    throw error;
+  }
+
+  if (!STAFF_ROLES.includes(user.role)) {
+    const error = new Error("Staff access required");
+    error.status = 403;
+    throw error;
+  }
+
+  const updateData = {};
+  const roleDetails = user.roleDetails ? user.roleDetails.toObject() : {};
+
+  if (updates && Object.prototype.hasOwnProperty.call(updates, "email")) {
+    if (!updates.email) {
+      const error = new Error("Email is required");
+      error.status = 400;
+      throw error;
+    }
+    updateData.email = updates.email;
+  }
+
+  if (updates && Object.prototype.hasOwnProperty.call(updates, "firstName")) {
+    updateData.firstName = updates.firstName;
+  }
+
+  if (updates && Object.prototype.hasOwnProperty.call(updates, "lastName")) {
+    updateData.lastName = updates.lastName;
+  }
+
+  if (updates && Object.prototype.hasOwnProperty.call(updates, "phone")) {
+    updateData.phone = updates.phone;
+  }
+
+  if (updates && Object.prototype.hasOwnProperty.call(updates, "password")) {
+    if (!updates.password) {
+      const error = new Error("Password is required");
+      error.status = 400;
+      throw error;
+    }
+    updateData.password = await bcrypt.hash(updates.password, SALT_ROUNDS);
+  }
+
+  if (updates && Object.prototype.hasOwnProperty.call(updates, "role")) {
+    const normalizedRole = normalizeRole(updates.role);
+    if (!STAFF_ROLES.includes(normalizedRole)) {
+      const error = new Error(
+        "Role must be one of: admin, ticket_office, door_staff"
+      );
+      error.status = 400;
+      throw error;
+    }
+    updateData.role = normalizedRole;
+  }
+
+  if (updates && Object.prototype.hasOwnProperty.call(updates, "permissions")) {
+    if (Array.isArray(updates.permissions)) {
+      roleDetails.permissions = updates.permissions;
+    }
+  }
+
+  if (updates && Object.prototype.hasOwnProperty.call(updates, "isActive")) {
+    if (typeof updates.isActive === "boolean") {
+      roleDetails.isActive = updates.isActive;
+    }
+  }
+
+  if (Object.keys(roleDetails).length > 0) {
+    updateData.roleDetails = roleDetails;
+  }
+
+  if (Object.keys(updateData).length === 0) {
+    const error = new Error("No valid fields provided for update");
+    error.status = 400;
+    throw error;
+  }
+
+  if (updateData.email) {
+    const emailOwner = await User.findOne({
+      email: updateData.email,
+      _id: { $ne: id },
+    });
+    if (emailOwner) {
+      const error = new Error("User already exists");
+      error.status = 409;
+      throw error;
+    }
+  }
+
+  const updated = await User.findByIdAndUpdate(id, updateData, {
+    new: true,
+    runValidators: true,
+  });
+
+  if (!updated) {
+    const error = new Error("User not found");
+    error.status = 404;
+    throw error;
+  }
+
+  return sanitizeUser(updated);
+};
+
+const deleteStaff = async (id) => {
+  if (!id) {
+    const error = new Error("Missing user id");
+    error.status = 401;
+    throw error;
+  }
+
+  if (!mongoose.isValidObjectId(id)) {
+    const error = new Error("Invalid user id");
+    error.status = 400;
+    throw error;
+  }
+
+  const user = await User.findById(id);
+  if (!user) {
+    const error = new Error("User not found");
+    error.status = 404;
+    throw error;
+  }
+
+  if (!STAFF_ROLES.includes(user.role)) {
+    const error = new Error("Staff access required");
+    error.status = 403;
+    throw error;
+  }
+
+  await User.deleteOne({ _id: id });
+  return sanitizeUser(user);
+};
+
+const toggleStaffStatus = async (id) => {
+  if (!id) {
+    const error = new Error("Missing user id");
+    error.status = 401;
+    throw error;
+  }
+
+  if (!mongoose.isValidObjectId(id)) {
+    const error = new Error("Invalid user id");
+    error.status = 400;
+    throw error;
+  }
+
+  const user = await User.findById(id);
+  if (!user) {
+    const error = new Error("User not found");
+    error.status = 404;
+    throw error;
+  }
+
+  if (!STAFF_ROLES.includes(user.role)) {
+    const error = new Error("Staff access required");
+    error.status = 403;
+    throw error;
+  }
+
+  const nextStatus = user.status === "suspended" ? "active" : "suspended";
+  user.status = nextStatus;
+  await user.save();
+
+  return sanitizeUser(user);
+};
+
+const listStaff = async () => {
+  const staff = await User.find({ role: { $in: STAFF_ROLES } }).sort({
+    createdAt: -1,
+  });
+  return staff.map((user) => sanitizeUser(user));
+};
+
 module.exports = {
   createStaff,
   loginStaff,
   getStaffById,
+  updateStaff,
+  deleteStaff,
+  toggleStaffStatus,
+  listStaff,
 };

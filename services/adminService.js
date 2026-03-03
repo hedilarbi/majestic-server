@@ -22,7 +22,7 @@ const buildToken = (user) => {
       email: user.email,
     },
     secret,
-    { expiresIn }
+    { expiresIn },
   );
 };
 
@@ -66,6 +66,7 @@ const createAdmin = async ({
     lastName,
     phone,
     role: "admin",
+    emailVerified: true,
     roleDetails: {
       permissions: Array.isArray(permissions) ? permissions : [],
     },

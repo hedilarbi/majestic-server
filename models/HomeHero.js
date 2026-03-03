@@ -26,7 +26,11 @@ const homeHeroSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Event",
     },
-    eventAffiche: {
+    movieAffiche: {
+      type: Boolean,
+      default: false,
+    },
+    showAffiche: {
       type: Boolean,
       default: false,
     },

@@ -79,7 +79,8 @@ const getSession = async (req, res) => {
 const getSessionsByEventId = async (req, res) => {
   try {
     const sessions = await sessionService.getSessionsByEventId(
-      req.params.eventId
+      req.params.eventId,
+      { status: "in_progress" }
     );
     return res.status(200).json({ sessions });
   } catch (error) {
@@ -94,7 +95,7 @@ const getSessionHomeByEventId = async (req, res) => {
   try {
     const data = await sessionService.getSessionHomeByEventId(
       req.params.eventId,
-      { status: req.query.status }
+      { status: "in_progress" }
     );
     return res.status(200).json(data);
   } catch (error) {
@@ -108,10 +109,54 @@ const getSessionHomeByEventId = async (req, res) => {
 const listSessionsByDateGrouped = async (req, res) => {
   try {
     const groups = await sessionService.listSessionsByDateGrouped(
-      req.query.date
+      req.query.date,
+      { status: "in_progress" }
     );
 
     return res.status(200).json({ groups });
+  } catch (error) {
+    const status = error.status || 500;
+    return res
+      .status(status)
+      .json({ message: error.message || "Server error" });
+  }
+};
+
+const   listGuichetSessions = async (req, res) => {
+  try {
+    const sessions = await sessionService.listGuichetSessions({
+      status: "in_progress",
+      dateFrom: req.query.dateFrom || req.query.from,
+      dateTo: req.query.dateTo || req.query.to,
+      name: req.query.nom || req.query.name,
+    });
+    return res.status(200).json({ sessions });
+  } catch (error) {
+    const status = error.status || 500;
+    return res
+      .status(status)
+      .json({ message: error.message || "Server error" });
+  }
+};
+
+const listDoorStaffSessions = async (req, res) => {
+  try {
+    const role = req.user && req.user.role;
+    if (role !== "door_staff" && role !== "admin") {
+      return res.status(403).json({ message: "Acces portier requis" });
+    }
+
+    const lookaheadMinutes = parsePositiveInt(
+      req.query.lookaheadMinutes,
+      90,
+      720,
+    );
+
+    const sessions = await sessionService.listDoorStaffSessions({
+      lookaheadMinutes,
+    });
+
+    return res.status(200).json({ sessions });
   } catch (error) {
     const status = error.status || 500;
     return res
@@ -155,6 +200,8 @@ module.exports = {
   getSessionsByEventId,
   getSessionHomeByEventId,
   listSessionsByDateGrouped,
+  listGuichetSessions,
+  listDoorStaffSessions,
   updateSession,
   deleteSession,
 };
