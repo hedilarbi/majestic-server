@@ -197,8 +197,8 @@ const scanTicket = async ({ userId, userRole, payload }) => {
     throw error;
   }
 
-  if (userRole !== "door_staff" && userRole !== "admin") {
-    const error = new Error("Acces portier requis.");
+  if (userRole !== "door_staff") {
+    const error = new Error("Acces door_staff requis.");
     error.status = 403;
     throw error;
   }
@@ -227,7 +227,7 @@ const scanTicket = async ({ userId, userRole, payload }) => {
   }
 
   if (qrSessionId && String(qrSessionId) !== String(expectedSessionId)) {
-    const error = new Error("Ce billet n'appartient pas a la session selectionnee.");
+    const error = new Error("Ce ticket appartient a une autre seance.");
     error.status = 409;
     error.code = "WRONG_SESSION";
     throw error;
@@ -245,14 +245,14 @@ const scanTicket = async ({ userId, userRole, payload }) => {
   }
 
   if (String(ticket.sessionId) !== String(expectedSessionId)) {
-    const error = new Error("Ce billet n'appartient pas a cette session.");
+    const error = new Error("Ce ticket appartient a une autre seance.");
     error.status = 409;
     error.code = "WRONG_SESSION";
     throw error;
   }
 
   if (ticket.isScanned) {
-    const error = new Error("Ticket deja scanne.");
+    const error = new Error("Ticket deja utilise.");
     error.status = 409;
     error.code = "ALREADY_SCANNED";
     error.details = {
@@ -290,7 +290,7 @@ const scanTicket = async ({ userId, userRole, payload }) => {
     const alreadyScannedTicket = await Ticket.findById(ticket._id)
       .select("code seat pricingName price isScanned scannedAt")
       .lean();
-    const error = new Error("Ticket deja scanne.");
+    const error = new Error("Ticket deja utilise.");
     error.status = 409;
     error.code = "ALREADY_SCANNED";
     error.details = {

@@ -146,15 +146,7 @@ const listDoorStaffSessions = async (req, res) => {
       return res.status(403).json({ message: "Acces portier requis" });
     }
 
-    const lookaheadMinutes = parsePositiveInt(
-      req.query.lookaheadMinutes,
-      90,
-      720,
-    );
-
-    const sessions = await sessionService.listDoorStaffSessions({
-      lookaheadMinutes,
-    });
+    const sessions = await sessionService.listDoorStaffSessions();
 
     return res.status(200).json({ sessions });
   } catch (error) {

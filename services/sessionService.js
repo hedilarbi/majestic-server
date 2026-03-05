@@ -508,19 +508,16 @@ const listGuichetSessions = async ({ dateFrom, dateTo, name, status } = {}) => {
     .sort({ date: 1, sessionTime: 1 });
 };
 
-const listDoorStaffSessions = async ({ lookaheadMinutes = 90 } = {}) => {
+const listDoorStaffSessions = async () => {
   const now = new Date();
-  const safeLookahead = Number.isFinite(Number(lookaheadMinutes))
-    ? Math.max(Math.min(Number(lookaheadMinutes), 720), 0)
-    : 90;
-
   const start = new Date(now);
   start.setHours(0, 0, 0, 0);
-  const end = new Date(now.getTime() + safeLookahead * 60 * 1000);
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
 
   const sessions = await Session.find({
     date: { $gte: start, $lte: end },
-    status: { $in: ["in_progress", "scheduled"] },
+    status: { $nin: ["completed", "cancelled"] },
   })
     .select("eventId date sessionTime roomId status availableSeats totalSeats")
     .populate("eventId", "name poster")
@@ -557,12 +554,16 @@ const listDoorStaffSessions = async ({ lookaheadMinutes = 90 } = {}) => {
   });
 
   items.sort((a, b) => {
-    const score = (status) => (status === "in_progress" ? 0 : 1);
-    const diff = score(a.status) - score(b.status);
-    if (diff !== 0) {
-      return diff;
+    const aStartsAt = new Date(a.startsAt || 0).getTime();
+    const bStartsAt = new Date(b.startsAt || 0).getTime();
+    const aDistance = Math.abs(aStartsAt - now.getTime());
+    const bDistance = Math.abs(bStartsAt - now.getTime());
+
+    if (aDistance !== bDistance) {
+      return aDistance - bDistance;
     }
-    return new Date(a.startsAt || 0).getTime() - new Date(b.startsAt || 0).getTime();
+
+    return aStartsAt - bStartsAt;
   });
 
   return items;

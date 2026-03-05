@@ -67,6 +67,31 @@ const buildSessionDateTimeUtc = (sessionDate, sessionTime) => {
   return new Date(naiveUtcMs - offsetMinutes * 60 * 1000);
 };
 
+const resolveEventDurationMinutes = (session) => {
+  const event =
+    session?.eventId && typeof session.eventId === "object"
+      ? session.eventId
+      : null;
+  const durationValue = Number(event?.duration);
+  if (!Number.isFinite(durationValue) || durationValue < 0) {
+    return 0;
+  }
+  return durationValue;
+};
+
+const buildSessionEndDateTimeUtc = (session) => {
+  const sessionStartDateTimeUtc = buildSessionDateTimeUtc(
+    session?.date,
+    session?.sessionTime
+  );
+  if (!sessionStartDateTimeUtc) {
+    return null;
+  }
+
+  const durationMinutes = resolveEventDurationMinutes(session);
+  return new Date(sessionStartDateTimeUtc.getTime() + durationMinutes * 60 * 1000);
+};
+
 const startSessionStatusCron = () => {
   let running = false;
   const task = cron.schedule(
@@ -81,16 +106,15 @@ const startSessionStatusCron = () => {
         const now = new Date();
         const sessions = await Session.find({
           status: { $in: ACTIVE_SESSION_STATUSES },
-        }).select("_id date sessionTime");
+        })
+          .select("_id date sessionTime eventId")
+          .populate({ path: "eventId", select: "duration" });
 
         const sessionIdsToComplete = [];
         sessions.forEach((session) => {
-          const sessionDateTimeUtc = buildSessionDateTimeUtc(
-            session.date,
-            session.sessionTime
-          );
+          const sessionEndDateTimeUtc = buildSessionEndDateTimeUtc(session);
 
-          if (sessionDateTimeUtc && now > sessionDateTimeUtc) {
+          if (sessionEndDateTimeUtc && now > sessionEndDateTimeUtc) {
             sessionIdsToComplete.push(session._id);
           }
         });
