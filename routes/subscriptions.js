@@ -7,13 +7,25 @@ const {
   updateSubscription,
   deleteSubscription,
 } = require("../controllers/subscriptionController");
-const { requireAdmin } = require("../middlewares/auth");
+const { requireDashboardPermission } = require("../middlewares/auth");
 const router = express.Router();
 
-router.post("/", requireAdmin, createSubscription);
+router.post(
+  "/",
+  requireDashboardPermission("subscriptions", "create"),
+  createSubscription,
+);
 router.get("/", listSubscriptions);
 router.get("/:id", getSubscriptionById);
-router.patch("/:id", requireAdmin, updateSubscription);
-router.delete("/:id", requireAdmin, deleteSubscription);
+router.patch(
+  "/:id",
+  requireDashboardPermission("subscriptions", "update"),
+  updateSubscription,
+);
+router.delete(
+  "/:id",
+  requireDashboardPermission("subscriptions", "delete"),
+  deleteSubscription,
+);
 
 module.exports = router;

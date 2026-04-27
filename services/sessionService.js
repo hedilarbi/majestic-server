@@ -633,7 +633,7 @@ const getSessionsByEventId = async (eventId, { status } = {}) => {
     filters.status = normalizeStatus(status);
   }
 
-  return Session.find(filters).sort({ date: 1 });
+  return Session.find(filters).sort({ createdAt: -1, _id: -1 });
 };
 
 const getSessionHomeByEventId = async (eventId, { status } = {}) => {

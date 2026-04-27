@@ -1,4 +1,5 @@
 const sessionService = require("../services/sessionService");
+const { isDashboardStaffRole } = require("../config/dashboardPermissions");
 
 const parsePositiveInt = (value, fallback, max) => {
   const parsed = Number.parseInt(value, 10);
@@ -80,7 +81,7 @@ const getSessionsByEventId = async (req, res) => {
   try {
     const sessions = await sessionService.getSessionsByEventId(
       req.params.eventId,
-      { status: "in_progress" }
+      { status: req.query.status }
     );
     return res.status(200).json({ sessions });
   } catch (error) {
@@ -142,8 +143,8 @@ const   listGuichetSessions = async (req, res) => {
 const listDoorStaffSessions = async (req, res) => {
   try {
     const role = req.user && req.user.role;
-    if (role !== "door_staff" && role !== "admin") {
-      return res.status(403).json({ message: "Acces portier requis" });
+    if (role !== "door_staff" && !isDashboardStaffRole(role)) {
+      return res.status(403).json({ message: "Accès portier requis" });
     }
 
     const sessions = await sessionService.listDoorStaffSessions();

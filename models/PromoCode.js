@@ -39,6 +39,12 @@ const promoCodeSchema = new mongoose.Schema(
       default: true,
       index: true,
     },
+    availability: {
+      type: String,
+      enum: ["public", "private"],
+      default: "public",
+      index: true,
+    },
   },
   { timestamps: true }
 );

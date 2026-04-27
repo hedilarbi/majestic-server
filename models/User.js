@@ -21,7 +21,16 @@ const UserSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ["customer", "admin", "ticket_office", "door_staff", "guest"],
+      enum: [
+        "customer",
+        "admin",
+        "super_admin",
+        "blog_manager",
+        "cashier",
+        "ticket_office",
+        "door_staff",
+        "guest",
+      ],
     },
     roleDetails: {
       isActive: {
@@ -29,6 +38,10 @@ const UserSchema = new mongoose.Schema(
       },
       permissions: {
         type: [String],
+      },
+      permissionsConfigured: {
+        type: Boolean,
+        default: false,
       },
     },
     subscriptionId: {

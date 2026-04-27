@@ -7,16 +7,30 @@ const {
   updateSessionTime,
   deleteSessionTime,
 } = require("../controllers/sessionTimeController");
-const { requireAdmin } = require("../middlewares/auth");
+const { requireDashboardPermission } = require("../middlewares/auth");
 
 const router = express.Router();
 
-router.use(requireAdmin);
-
-router.post("/", createSessionTime);
-router.get("/", listSessionTimes);
-router.get("/:id", getSessionTime);
-router.put("/:id", updateSessionTime);
-router.delete("/:id", deleteSessionTime);
+router.get("/", requireDashboardPermission("session_times", "list"), listSessionTimes);
+router.get(
+  "/:id",
+  requireDashboardPermission("session_times", "list"),
+  getSessionTime,
+);
+router.post(
+  "/",
+  requireDashboardPermission("session_times", "create"),
+  createSessionTime,
+);
+router.put(
+  "/:id",
+  requireDashboardPermission("session_times", "update"),
+  updateSessionTime,
+);
+router.delete(
+  "/:id",
+  requireDashboardPermission("session_times", "delete"),
+  deleteSessionTime,
+);
 
 module.exports = router;

@@ -40,7 +40,7 @@ const assertCustomer = async (payload) => {
     throw error;
   }
 
-  const user = await User.findById(userId).select("_id role");
+  const user = await User.findById(userId).select("_id role email");
   if (!user) {
     const error = new Error("User not found");
     error.status = 404;
@@ -48,12 +48,31 @@ const assertCustomer = async (payload) => {
   }
 
   if (user.role !== CUSTOMER_ROLE) {
-    const error = new Error("Acces client requis");
+    const error = new Error("Accès client requis");
     error.status = 403;
     throw error;
   }
 
   return user;
+};
+
+const normalizeEmail = (value) => {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value.trim().toLowerCase();
+};
+
+const buildSubscriptionSaleQuery = (customer) => {
+  const normalizedEmail = normalizeEmail(customer?.email);
+  if (normalizedEmail) {
+    return {
+      $or: [{ userId: customer._id }, { "customerContact.email": normalizedEmail }],
+    };
+  }
+
+  return { userId: customer._id };
 };
 
 const serializeSession = (session) => {
@@ -97,9 +116,29 @@ const serializeSubscription = (subscription) => {
   };
 };
 
+const serializeCustomerContact = (contact) => {
+  if (!contact || typeof contact !== "object") {
+    return null;
+  }
+
+  const firstName = typeof contact.firstName === "string" ? contact.firstName.trim() : "";
+  const lastName = typeof contact.lastName === "string" ? contact.lastName.trim() : "";
+  const email = normalizeEmail(contact.email);
+
+  if (!firstName && !lastName && !email) {
+    return null;
+  }
+
+  return {
+    firstName,
+    lastName,
+    email,
+  };
+};
+
 const serializeBookingPayment = (booking) => {
   const session = serializeSession(booking.sessionId);
-  const eventName = session?.event?.name || "Seance";
+  const eventName = session?.event?.name || "Séance";
   const datePart = session?.date ? String(session.date).slice(0, 10) : "";
   const timePart = session?.sessionTime || "";
 
@@ -111,7 +150,7 @@ const serializeBookingPayment = (booking) => {
     subtitle:
       datePart || timePart
         ? `${datePart}${timePart ? ` • ${timePart}` : ""}`
-        : "Reservation de seance",
+        : "Réservation de séance",
     amount: booking.totalAmount,
     paymentMethod: booking.paymentMethod || "",
     paymentStatus: booking.paymentStatus || "",
@@ -132,7 +171,7 @@ const serializeSubscriptionPayment = (sale) => ({
   kind: "subscription",
   title: `Abonnement - ${sale.subscriptionId?.name || "Abonnement"}`,
   subtitle: Number.isFinite(sale.totalCredits)
-    ? `${sale.totalCredits} credits`
+    ? `${sale.totalCredits} crédits`
     : "Abonnement client",
   amount: sale.price,
   paymentMethod: sale.paymentMethod || "",
@@ -142,6 +181,7 @@ const serializeSubscriptionPayment = (sale) => ({
   reference: sale.subscriptionCode || sale.subscriptionId?.name || "",
   subscription: serializeSubscription(sale.subscriptionId),
   subscriptionCode: sale.subscriptionCode || "",
+  customerContact: serializeCustomerContact(sale.customerContact),
   remainingCredits: Number.isFinite(sale.remainingCredits)
     ? sale.remainingCredits
     : sale.totalCredits,
@@ -152,6 +192,7 @@ const serializeSubscriptionPayment = (sale) => ({
 const serializeSubscriptionSale = (sale) => ({
   id: sale._id ? String(sale._id) : null,
   subscription: serializeSubscription(sale.subscriptionId),
+  customerContact: serializeCustomerContact(sale.customerContact),
   price: sale.price,
   totalCredits: sale.totalCredits,
   usedCredits: Number.isFinite(sale.usedCredits) ? sale.usedCredits : 0,
@@ -226,7 +267,7 @@ const listCustomerTickets = async ({ tokenPayload, page, limit }) => {
       .skip(skip)
       .limit(safeLimit)
       .select(
-        "code seat pricingName price qrCodeUrl isScanned scannedAt bookingId sessionId createdAt",
+        "code status seat pricingName price qrCodeUrl isScanned scannedAt cancelledAt bookingId sessionId createdAt",
       )
       .populate({
         path: "bookingId",
@@ -244,6 +285,14 @@ const listCustomerTickets = async ({ tokenPayload, page, limit }) => {
     items: items.map((ticket) => ({
       id: ticket._id ? String(ticket._id) : null,
       code: ticket.code || "",
+      status:
+        String(ticket.status || "").toLowerCase() === "cancelled"
+          ? "cancelled"
+          : typeof ticket.isScanned === "boolean" && ticket.isScanned
+            ? "scanned"
+            : String(ticket.status || "").toLowerCase() === "scanned"
+              ? "scanned"
+              : "active",
       seat: ticket.seat || null,
       pricingName: ticket.pricingName || "",
       price: ticket.price,
@@ -253,6 +302,7 @@ const listCustomerTickets = async ({ tokenPayload, page, limit }) => {
           ? ticket.isScanned
           : String(ticket.status || "").toLowerCase() === "scanned",
       scannedAt: ticket.scannedAt || null,
+      cancelledAt: ticket.cancelledAt || null,
       booking: ticket.bookingId
         ? {
             id: ticket.bookingId._id ? String(ticket.bookingId._id) : null,
@@ -279,7 +329,7 @@ const listCustomerSubscriptionSales = async ({ tokenPayload, page, limit }) => {
     limit,
   );
 
-  const query = { userId: customer._id };
+  const query = buildSubscriptionSaleQuery(customer);
   const [total, items] = await Promise.all([
     SubscriptionSale.countDocuments(query),
     SubscriptionSale.find(query)
@@ -287,7 +337,7 @@ const listCustomerSubscriptionSales = async ({ tokenPayload, page, limit }) => {
       .skip(skip)
       .limit(safeLimit)
       .select(
-        "subscriptionId subscriptionCode price totalCredits usedCredits remainingCredits paymentMethod paymentStatus status source createdAt",
+        "subscriptionId subscriptionCode customerContact price totalCredits usedCredits remainingCredits paymentMethod paymentStatus status source createdAt",
       )
       .populate({
         path: "subscriptionId",
@@ -315,10 +365,10 @@ const getCustomerSubscriptionSaleById = async ({ tokenPayload, saleId }) => {
 
   const sale = await SubscriptionSale.findOne({
     _id: saleId,
-    userId: customer._id,
+    ...buildSubscriptionSaleQuery(customer),
   })
     .select(
-      "subscriptionId subscriptionCode price totalCredits usedCredits remainingCredits paymentMethod paymentStatus status source createdAt",
+      "subscriptionId subscriptionCode customerContact price totalCredits usedCredits remainingCredits paymentMethod paymentStatus status source createdAt",
     )
     .populate({
       path: "subscriptionId",
@@ -356,10 +406,10 @@ const listCustomerPayments = async ({ tokenPayload, page, limit }) => {
         populate: { path: "eventId", select: "name poster affiche image" },
       })
       .lean(),
-    SubscriptionSale.find({ userId: customer._id })
+    SubscriptionSale.find(buildSubscriptionSaleQuery(customer))
       .sort({ createdAt: -1 })
       .select(
-        "subscriptionId subscriptionCode price totalCredits usedCredits remainingCredits paymentMethod paymentStatus status source createdAt",
+        "subscriptionId subscriptionCode customerContact price totalCredits usedCredits remainingCredits paymentMethod paymentStatus status source createdAt",
       )
       .populate({
         path: "subscriptionId",

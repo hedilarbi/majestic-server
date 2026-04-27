@@ -4,14 +4,14 @@ const getReservationForSession = async (req, res) => {
   try {
     const result = await reservationService.getReservationForSession({
       sessionId: req.params.sessionId,
-      userId: req.user && req.user.sub,
+      userId: req.user && req.user.sub
     });
     return res.status(200).json(result);
   } catch (error) {
     const status = error.status || 500;
-    return res
-      .status(status)
-      .json({ message: error.message || "Server error" });
+    return res.
+    status(status).
+    json({ message: error.message || "Server error" });
   }
 };
 
@@ -20,14 +20,14 @@ const createReservation = async (req, res) => {
     const reservation = await reservationService.createReservation({
       payload: req.body || {},
       userId: req.user && req.user.sub,
-      io: req.io,
+      io: req.io
     });
-    return res.status(201).json({ reservation });
+    return res.status(201).json({ reservation: reservation });
   } catch (error) {
     const status = error.status || 500;
-    return res
-      .status(status)
-      .json({ message: error.message || "Server error" });
+    return res.
+    status(status).
+    json({ message: error.message || "Server error" });
   }
 };
 
@@ -36,14 +36,14 @@ const cancelReservation = async (req, res) => {
     const result = await reservationService.cancelReservation({
       reservationId: req.params.reservationId,
       userId: req.user && req.user.sub,
-      io: req.io,
+      io: req.io
     });
     return res.status(200).json(result);
   } catch (error) {
     const status = error.status || 500;
-    return res
-      .status(status)
-      .json({ message: error.message || "Server error" });
+    return res.
+    status(status).
+    json({ message: error.message || "Server error" });
   }
 };
 
@@ -52,14 +52,14 @@ const cancelReservationsForSession = async (req, res) => {
     const result = await reservationService.cancelReservationsForSession({
       sessionId: req.params.sessionId,
       userId: req.user && req.user.sub,
-      io: req.io,
+      io: req.io
     });
     return res.status(200).json(result);
   } catch (error) {
     const status = error.status || 500;
-    return res
-      .status(status)
-      .json({ message: error.message || "Server error" });
+    return res.
+    status(status).
+    json({ message: error.message || "Server error" });
   }
 };
 
@@ -67,5 +67,5 @@ module.exports = {
   createReservation,
   cancelReservation,
   getReservationForSession,
-  cancelReservationsForSession,
+  cancelReservationsForSession
 };

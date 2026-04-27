@@ -39,7 +39,14 @@ const getUserTokenData = async (payload) => {
 
   await User.updateOne({ _id: user._id }, { $set: updateData });
 
-  return user;
+  const sanitizedUser = user.toObject({ versionKey: false });
+  delete sanitizedUser.password;
+  sanitizedUser.lastSeenAt = now;
+  if (user.role === "guest") {
+    sanitizedUser.expiredAt = updateData.expiredAt;
+  }
+
+  return sanitizedUser;
 };
 
 module.exports = {

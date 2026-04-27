@@ -44,6 +44,12 @@ const ticketSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    status: {
+      type: String,
+      enum: ["active", "scanned", "cancelled"],
+      default: "active",
+      index: true,
+    },
     isScanned: {
       type: Boolean,
       default: false,
@@ -59,11 +65,22 @@ const ticketSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    cancelledAt: {
+      type: Date,
+      default: null,
+    },
+    cancelledBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      index: true,
+    },
   },
   { timestamps: true },
 );
 
 ticketSchema.index({ sessionId: 1, isScanned: 1 });
+ticketSchema.index({ sessionId: 1, status: 1 });
 ticketSchema.index({ userId: 1, createdAt: -1 });
 
 ticketSchema.statics.generateCode = function () {

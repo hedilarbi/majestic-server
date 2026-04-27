@@ -24,6 +24,18 @@ const listPromoCodes = async (req, res) => {
   }
 };
 
+const generatePromoCode = async (_req, res) => {
+  try {
+    const code = await promoCodeService.generateUniquePromoCode();
+    return res.status(200).json({ code });
+  } catch (error) {
+    const status = error.status || 500;
+    return res
+      .status(status)
+      .json({ message: error.message || "Server error" });
+  }
+};
+
 const getPromoCode = async (req, res) => {
   try {
     const promoCode = await promoCodeService.getPromoCodeById(req.params.id);
@@ -100,11 +112,12 @@ const validatePromoCodeForCheckout = async (req, res) => {
     const role = req.user && req.user.role;
     if (
       role !== "admin" &&
+      role !== "super_admin" &&
       role !== "ticket_office" &&
       role !== "customer" &&
       role !== "guest"
     ) {
-      return res.status(403).json({ message: "Acces refuse" });
+      return res.status(403).json({ message: "Accès refuse" });
     }
 
     const result = await promoCodeService.validatePromoCodeForCheckout({
@@ -127,6 +140,7 @@ const validatePromoCodeForCheckout = async (req, res) => {
 module.exports = {
   createPromoCode,
   listPromoCodes,
+  generatePromoCode,
   getPromoCode,
   updatePromoCode,
   deletePromoCode,

@@ -8,7 +8,7 @@ const { seatKey } = require("../utils/seatKey");
 const {
   resolveRoom,
   buildOverrideMap,
-  buildPricingOverrideMap,
+  buildPricingOverrideMap
 } = require("../utils/seatHelpers");
 
 const mergeUniqueSeats = (seats = []) => {
@@ -20,7 +20,7 @@ const mergeUniqueSeats = (seats = []) => {
     }
     byKey.set(seatKey(seat.row, seat.col), {
       row: String(seat.row),
-      col: Number(seat.col),
+      col: Number(seat.col)
     });
   });
 
@@ -34,21 +34,21 @@ const getSeatMap = async (sessionId, currentUserId) => {
     throw error;
   }
 
-  const session = await Session.findById(sessionId)
-    .select(
-      "roomId overrides pricingOverrides eventId date sessionTime version pricingLimits status",
-    )
-    .populate("eventId")
-    .populate({ path: "pricingOverrides.pricingId", select: "name price" });
+  const session = await Session.findById(sessionId).
+  select(
+    "roomId overrides pricingOverrides eventId date sessionTime version pricingLimits status"
+  ).
+  populate("eventId").
+  populate({ path: "pricingOverrides.pricingId", select: "name price" });
   if (!session) {
     const error = new Error("Session not found");
     error.status = 404;
     throw error;
   }
 
-  const sessionStatus = String(session.status || "")
-    .trim()
-    .toLowerCase();
+  const sessionStatus = String(session.status || "").
+  trim().
+  toLowerCase();
   if (sessionStatus !== "in_progress") {
     const error = new Error("Session is not available");
     error.status = 409;
@@ -69,19 +69,19 @@ const getSeatMap = async (sessionId, currentUserId) => {
   const now = new Date();
   const currentUserIdString = currentUserId ? String(currentUserId) : "";
   const [bookings, seatLocks, seatReservations] = await Promise.all([
-    Booking.find({
-      sessionId,
-      status: { $in: ["confirmed", "used"] },
-    }).select("seats"),
-    SeatLock.find({ sessionId, expiresAt: { $gt: now } }).select(
-      "row col reservedBy",
-    ),
-    SeatReservation.find({
-      sessionId,
-      status: "pending",
-      expiresAt: { $gt: now },
-    }).select("_id userId seats expiresAt createdAt updatedAt"),
-  ]);
+  Booking.find({
+    sessionId,
+    status: { $in: ["confirmed", "used"] }
+  }).select("seats"),
+  SeatLock.find({ sessionId, expiresAt: { $gt: now } }).select(
+    "row col reservedBy"
+  ),
+  SeatReservation.find({
+    sessionId,
+    status: "pending",
+    expiresAt: { $gt: now }
+  }).select("_id userId seats expiresAt createdAt updatedAt")]
+  );
 
   const bookedSet = new Set();
   bookings.forEach((booking) => {
@@ -102,35 +102,35 @@ const getSeatMap = async (sessionId, currentUserId) => {
 
   let myReservation = null;
   if (currentUserIdString) {
-    const myReservations = seatReservations
-      .filter((reservation) => String(reservation.userId) === currentUserIdString)
-      .sort((a, b) => {
-        const aDate = new Date(a.updatedAt || a.createdAt || 0).getTime();
-        const bDate = new Date(b.updatedAt || b.createdAt || 0).getTime();
-        return bDate - aDate;
-      });
+    const myReservations = seatReservations.
+    filter((reservation) => String(reservation.userId) === currentUserIdString).
+    sort((a, b) => {
+      const aDate = new Date(a.updatedAt || a.createdAt || 0).getTime();
+      const bDate = new Date(b.updatedAt || b.createdAt || 0).getTime();
+      return bDate - aDate;
+    });
 
     if (myReservations.length > 0) {
       const primaryReservation = myReservations[0];
       const mergedSeats = mergeUniqueSeats(
-        myReservations.flatMap((reservation) => reservation.seats || []),
+        myReservations.flatMap((reservation) => reservation.seats || [])
       );
 
       myReservation = {
         reservationId: String(primaryReservation._id),
         expiresAt: primaryReservation.expiresAt,
-        seats: mergedSeats,
+        seats: mergedSeats
       };
     }
   }
 
   const sessionOverrides = buildOverrideMap(session.overrides, [
-    "blocked",
-    "staff",
-  ]);
+  "blocked",
+  "staff"]
+  );
   const roomOverrides = buildOverrideMap(room.overrides, ["blocked", "staff"]);
   const sessionPricingOverrides = buildPricingOverrideMap(
-    session.pricingOverrides,
+    session.pricingOverrides
   );
   const roomPricingOverrides = buildPricingOverrideMap(room.pricingOverrides);
 
@@ -143,7 +143,7 @@ const getSeatMap = async (sessionId, currentUserId) => {
         cellType: "couloir",
         status: "aisle",
         isBookable: false,
-        pricingOverrideId: null,
+        pricingOverrideId: null
       };
     }
 
@@ -159,7 +159,7 @@ const getSeatMap = async (sessionId, currentUserId) => {
     }
 
     const pricingOverrideId =
-      sessionPricingOverrides.get(key) || roomPricingOverrides.get(key) || null;
+    sessionPricingOverrides.get(key) || roomPricingOverrides.get(key) || null;
 
     return {
       row: cell.row,
@@ -167,7 +167,7 @@ const getSeatMap = async (sessionId, currentUserId) => {
       cellType: cell.cellType,
       status,
       isBookable: status === "available",
-      pricingOverrideId,
+      pricingOverrideId
     };
   });
 
@@ -175,10 +175,10 @@ const getSeatMap = async (sessionId, currentUserId) => {
     session,
     event: session.eventId || null,
     seatMap,
-    myReservation,
+    myReservation
   };
 };
 
 module.exports = {
-  getSeatMap,
+  getSeatMap
 };

@@ -17,6 +17,7 @@ const serializePromoCode = (promoCode) => ({
   code: promoCode.code || "",
   reductionValue: promoCode.reductionValue,
   reductionType: promoCode.reductionType || "",
+  availability: promoCode.availability || "public",
   expiresAt: promoCode.expiresAt || null,
   totalUsageLimit:
     promoCode.totalUsageLimit === undefined ? null : promoCode.totalUsageLimit,
@@ -38,6 +39,7 @@ const listPublicOffers = async () => {
       .lean(),
     PromoCode.find({
       isActive: true,
+      availability: "public",
       expiresAt: { $gte: now },
     })
       .sort({ createdAt: -1 })
@@ -53,4 +55,3 @@ const listPublicOffers = async () => {
 module.exports = {
   listPublicOffers,
 };
-

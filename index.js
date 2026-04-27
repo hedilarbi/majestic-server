@@ -24,6 +24,14 @@ const bookingRoutes = require("./routes/bookings");
 const ticketRoutes = require("./routes/tickets");
 const subscriptionSalesRoutes = require("./routes/subscription-sales");
 const offersRoutes = require("./routes/offers");
+const blogContentRoutes = require("./routes/blog-contents");
+const blogFormSubmissionRoutes = require("./routes/blog-form-submissions");
+const spaceReservationRequestRoutes = require("./routes/space-reservation-requests");
+const cashRegisterRoutes = require("./routes/cash-registers");
+const statisticsRoutes = require("./routes/statistics");
+const dashboardNotificationRoutes = require("./routes/dashboard-notifications");
+const auditLogRoutes = require("./routes/audit-logs");
+const paymentRoutes = require("./routes/payments");
 
 require("dotenv/config");
 
@@ -86,6 +94,14 @@ app.use("/bookings", bookingRoutes);
 app.use("/tickets", ticketRoutes);
 app.use("/subscription-sales", subscriptionSalesRoutes);
 app.use("/offers", offersRoutes);
+app.use("/blog-contents", blogContentRoutes);
+app.use("/blog-form-submissions", blogFormSubmissionRoutes);
+app.use("/space-reservation-requests", spaceReservationRequestRoutes);
+app.use("/cash-registers", cashRegisterRoutes);
+app.use("/statistics", statisticsRoutes);
+app.use("/dashboard-notifications", dashboardNotificationRoutes);
+app.use("/audit-logs", auditLogRoutes);
+app.use("/payments", paymentRoutes);
 
 mongoose
   .connect(process.env.DB_CONNECTION)

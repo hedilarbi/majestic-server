@@ -152,7 +152,7 @@ const swapHomeHeroOrder = async ({ firstId, secondId }) => {
   }
 
   if (firstId === secondId) {
-    const error = new Error("Ids must be different");
+    const error = new Error("Ids must be différent");
     error.status = 400;
     throw error;
   }

@@ -1,12 +1,14 @@
 const express = require("express");
 const {
   listSubscriptionSales,
+  listMySubscriptionSales,
   createSubscriptionSale,
 } = require("../controllers/subscriptionSalesController");
 const { authenticate } = require("../middlewares/auth");
 
 const router = express.Router();
 
+router.get("/me", authenticate, listMySubscriptionSales);
 router.get("/", authenticate, listSubscriptionSales);
 router.post("/", authenticate, createSubscriptionSale);
 

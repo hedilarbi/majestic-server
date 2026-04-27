@@ -13,21 +13,36 @@ const {
   updateSession,
   deleteSession,
 } = require("../controllers/sessionController");
-const { authenticate, requireAdmin } = require("../middlewares/auth");
+const {
+  authenticate,
+  requireDashboardPermission,
+} = require("../middlewares/auth");
 
 const router = express.Router();
 
 router.get("/", listSessions);
-router.get("/populated", listSessionsPopulatedEveent);
+router.get(
+  "/populated",
+  requireDashboardPermission("sessions", "list"),
+  listSessionsPopulatedEveent,
+);
 router.get("/by-date", listSessionsByDateGrouped);
 router.get("/guichet-sessions", listGuichetSessions);
 router.get("/door-staff", authenticate, listDoorStaffSessions);
 router.get("/home/:eventId", getSessionHomeByEventId);
-router.get("/event/:eventId", getSessionsByEventId);
+router.get(
+  "/event/:eventId",
+  requireDashboardPermission("sessions", "list"),
+  getSessionsByEventId,
+);
 router.get("/:id", getSession);
 
-router.post("/", requireAdmin, createSession);
-router.put("/:id", requireAdmin, updateSession);
-router.delete("/:id", requireAdmin, deleteSession);
+router.post("/", requireDashboardPermission("sessions", "create"), createSession);
+router.put("/:id", requireDashboardPermission("sessions", "update"), updateSession);
+router.delete(
+  "/:id",
+  requireDashboardPermission("sessions", "delete"),
+  deleteSession,
+);
 
 module.exports = router;

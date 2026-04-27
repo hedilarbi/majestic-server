@@ -10,14 +10,14 @@ const resolvePagination = (page, limit) => {
 
   const safePage = Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1;
   const safeLimit =
-    Number.isFinite(parsedLimit) && parsedLimit > 0
-      ? Math.min(parsedLimit, 200)
-      : 50;
+  Number.isFinite(parsedLimit) && parsedLimit > 0 ?
+  Math.min(parsedLimit, 200) :
+  50;
 
   return {
     page: safePage,
     limit: safeLimit,
-    skip: (safePage - 1) * safeLimit,
+    skip: (safePage - 1) * safeLimit
   };
 };
 
@@ -30,7 +30,7 @@ const serializeUser = (user) => {
     id: user._id ? String(user._id) : null,
     firstName: user.firstName || "",
     lastName: user.lastName || "",
-    email: user.email || "",
+    email: user.email || ""
   };
 };
 
@@ -40,21 +40,21 @@ const serializeSession = (session) => {
   }
 
   const event =
-    session.eventId && typeof session.eventId === "object"
-      ? session.eventId
-      : null;
+  session.eventId && typeof session.eventId === "object" ?
+  session.eventId :
+  null;
 
   return {
     id: session._id ? String(session._id) : null,
     date: session.date || null,
     sessionTime: session.sessionTime || "",
     roomId: session.roomId || "",
-    event: event
-      ? {
-          id: event._id ? String(event._id) : null,
-          name: event.name || event.nom || event.title || "",
-        }
-      : null,
+    event: event ?
+    {
+      id: event._id ? String(event._id) : null,
+      name: event.name || event.nom || event.title || ""
+    } :
+    null
   };
 };
 
@@ -77,9 +77,9 @@ const parseQrPayload = (scanText) => {
     try {
       const parsed = JSON.parse(raw);
       const ticketCode =
-        typeof parsed?.ticketCode === "string" ? parsed.ticketCode.trim() : "";
+      typeof parsed?.ticketCode === "string" ? parsed.ticketCode.trim() : "";
       const sessionId =
-        typeof parsed?.sessionId === "string" ? parsed.sessionId.trim() : "";
+      typeof parsed?.sessionId === "string" ? parsed.sessionId.trim() : "";
 
       if (!ticketCode) {
         const error = new Error("Code ticket manquant dans le QR.");
@@ -101,14 +101,30 @@ const parseQrPayload = (scanText) => {
   return { ticketCode: raw, qrSessionId: null, raw };
 };
 
+const resolveTicketStatus = (ticket) => {
+  const rawStatus = String(ticket?.status || "").
+  trim().
+  toLowerCase();
+
+  if (rawStatus === "cancelled") {
+    return "cancelled";
+  }
+
+  if (rawStatus === "scanned" || ticket?.isScanned === true) {
+    return "scanned";
+  }
+
+  return "active";
+};
+
 const serializeSessionDetails = (session) => {
   if (!session || typeof session !== "object") {
     return null;
   }
   const event =
-    session.eventId && typeof session.eventId === "object"
-      ? session.eventId
-      : null;
+  session.eventId && typeof session.eventId === "object" ?
+  session.eventId :
+  null;
 
   return {
     id: session._id ? String(session._id) : null,
@@ -116,12 +132,12 @@ const serializeSessionDetails = (session) => {
     sessionTime: session.sessionTime || "",
     roomId: session.roomId || "",
     status: session.status || "",
-    event: event
-      ? {
-          id: event._id ? String(event._id) : null,
-          name: event.name || "",
-        }
-      : null,
+    event: event ?
+    {
+      id: event._id ? String(event._id) : null,
+      name: event.name || ""
+    } :
+    null
   };
 };
 
@@ -131,80 +147,84 @@ const serializeScanTicket = (ticket) => ({
   seat: ticket.seat || null,
   pricingName: ticket.pricingName || "",
   price: ticket.price,
-  isScanned: Boolean(ticket.isScanned),
+  status: resolveTicketStatus(ticket),
+  isScanned: resolveTicketStatus(ticket) === "scanned",
   scannedAt: ticket.scannedAt || null,
+  cancelledAt: ticket.cancelledAt || null
 });
 
 const listTickets = async ({ page, limit }) => {
   const { page: safePage, limit: safeLimit, skip } = resolvePagination(
     page,
-    limit,
+    limit
   );
 
   const query = {};
   const [total, tickets] = await Promise.all([
-    Ticket.countDocuments(query),
-    Ticket.find(query)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(safeLimit)
-      .populate({ path: "bookingId", select: "bookingNumber" })
-      .populate({
-        path: "sessionId",
-        select: "date sessionTime roomId eventId",
-        populate: { path: "eventId", select: "name" },
-      })
-      .populate({ path: "userId", select: "firstName lastName email" })
-      .lean(),
-  ]);
+  Ticket.countDocuments(query),
+  Ticket.find(query).
+  sort({ createdAt: -1 }).
+  skip(skip).
+  limit(safeLimit).
+  select(
+    "code status isScanned seat pricingName price cancelledAt scannedAt bookingId sessionId userId createdAt"
+  ).
+  populate({ path: "bookingId", select: "bookingNumber" }).
+  populate({
+    path: "sessionId",
+    select: "date sessionTime roomId eventId",
+    populate: { path: "eventId", select: "name" }
+  }).
+  populate({ path: "userId", select: "firstName lastName email" }).
+  lean()]
+  );
 
   const items = tickets.map((ticket) => ({
     id: ticket._id ? String(ticket._id) : null,
     code: ticket.code,
-    isScanned:
-      typeof ticket.isScanned === "boolean"
-        ? ticket.isScanned
-        : String(ticket.status || "").toLowerCase() === "scanned",
+    status: resolveTicketStatus(ticket),
+    isScanned: resolveTicketStatus(ticket) === "scanned",
     seat: ticket.seat || null,
     pricingName: ticket.pricingName,
     price: ticket.price,
-    booking: ticket.bookingId
-      ? {
-          id: ticket.bookingId._id
-            ? String(ticket.bookingId._id)
-            : null,
-          bookingNumber: ticket.bookingId.bookingNumber || "",
-        }
-      : null,
+    booking: ticket.bookingId ?
+    {
+      id: ticket.bookingId._id ?
+      String(ticket.bookingId._id) :
+      null,
+      bookingNumber: ticket.bookingId.bookingNumber || ""
+    } :
+    null,
     session: serializeSession(ticket.sessionId),
     user: serializeUser(ticket.userId),
     scannedAt: ticket.scannedAt || null,
-    createdAt: ticket.createdAt || null,
+    cancelledAt: ticket.cancelledAt || null,
+    createdAt: ticket.createdAt || null
   }));
 
   return {
     items,
     total,
     page: safePage,
-    limit: safeLimit,
+    limit: safeLimit
   };
 };
 
 const scanTicket = async ({ userId, userRole, payload }) => {
   if (!userId) {
-    const error = new Error("Utilisateur non authentifie.");
+    const error = new Error("Utilisateur non authentifié.");
     error.status = 401;
     throw error;
   }
 
   if (userRole !== "door_staff") {
-    const error = new Error("Acces door_staff requis.");
+    const error = new Error("Accès door_staff requis.");
     error.status = 403;
     throw error;
   }
 
   const expectedSessionId =
-    typeof payload?.sessionId === "string" ? payload.sessionId.trim() : "";
+  typeof payload?.sessionId === "string" ? payload.sessionId.trim() : "";
   if (!expectedSessionId || !mongoose.isValidObjectId(expectedSessionId)) {
     const error = new Error("Session de scan invalide.");
     error.status = 400;
@@ -212,13 +232,13 @@ const scanTicket = async ({ userId, userRole, payload }) => {
   }
 
   const { ticketCode, qrSessionId } = parseQrPayload(
-    payload?.qrText || payload?.qrPayload || payload?.code || "",
+    payload?.qrText || payload?.qrPayload || payload?.code || ""
   );
 
-  const expectedSession = await Session.findById(expectedSessionId)
-    .select("eventId date sessionTime roomId status")
-    .populate({ path: "eventId", select: "name" })
-    .lean();
+  const expectedSession = await Session.findById(expectedSessionId).
+  select("eventId date sessionTime roomId status").
+  populate({ path: "eventId", select: "name" }).
+  lean();
 
   if (!expectedSession) {
     const error = new Error("Session introuvable.");
@@ -227,15 +247,15 @@ const scanTicket = async ({ userId, userRole, payload }) => {
   }
 
   if (qrSessionId && String(qrSessionId) !== String(expectedSessionId)) {
-    const error = new Error("Ce ticket appartient a une autre seance.");
+    const error = new Error("Ce ticket appartient a une autre séance.");
     error.status = 409;
     error.code = "WRONG_SESSION";
     throw error;
   }
 
-  const ticket = await Ticket.findOne({ code: ticketCode })
-    .populate({ path: "bookingId", select: "bookingNumber status paymentStatus" })
-    .lean();
+  const ticket = await Ticket.findOne({ code: ticketCode }).
+  populate({ path: "bookingId", select: "bookingNumber status paymentStatus" }).
+  lean();
 
   if (!ticket) {
     const error = new Error("Ticket introuvable.");
@@ -245,35 +265,47 @@ const scanTicket = async ({ userId, userRole, payload }) => {
   }
 
   if (String(ticket.sessionId) !== String(expectedSessionId)) {
-    const error = new Error("Ce ticket appartient a une autre seance.");
+    const error = new Error("Ce ticket appartient a une autre séance.");
     error.status = 409;
     error.code = "WRONG_SESSION";
     throw error;
   }
 
-  if (ticket.isScanned) {
-    const error = new Error("Ticket deja utilise.");
+  const ticketStatus = resolveTicketStatus(ticket);
+
+  if (ticketStatus === "cancelled") {
+    const error = new Error("Ticket annulé.");
+    error.status = 409;
+    error.code = "CANCELLED_TICKET";
+    error.details = {
+      ticket: serializeScanTicket(ticket)
+    };
+    throw error;
+  }
+
+  if (ticketStatus === "scanned") {
+    const error = new Error("Ticket déjà utilisé.");
     error.status = 409;
     error.code = "ALREADY_SCANNED";
     error.details = {
-      ticket: serializeScanTicket(ticket),
+      ticket: serializeScanTicket(ticket)
     };
     throw error;
   }
 
   const booking =
-    ticket.bookingId && typeof ticket.bookingId === "object"
-      ? ticket.bookingId
-      : null;
+  ticket.bookingId && typeof ticket.bookingId === "object" ?
+  ticket.bookingId :
+  null;
   if (!booking || !["confirmed", "used"].includes(String(booking.status || ""))) {
-    const error = new Error("Ticket invalide: reservation non confirmee.");
+    const error = new Error("Ticket invalide: réservation non confirmée.");
     error.status = 409;
     error.code = "BOOKING_NOT_CONFIRMED";
     throw error;
   }
 
   if (booking.paymentStatus !== "completed") {
-    const error = new Error("Ticket invalide: paiement non finalise.");
+    const error = new Error("Ticket invalide: paiement non finalisé.");
     error.status = 409;
     error.code = "PAYMENT_NOT_COMPLETED";
     throw error;
@@ -281,57 +313,58 @@ const scanTicket = async ({ userId, userRole, payload }) => {
 
   const now = new Date();
   const scannedTicket = await Ticket.findOneAndUpdate(
-    { _id: ticket._id, isScanned: false },
-    { $set: { isScanned: true, scannedAt: now, scannedBy: userId } },
-    { new: true },
+    { _id: ticket._id, isScanned: false, status: { $ne: "cancelled" } },
+    { $set: { isScanned: true, status: "scanned", scannedAt: now, scannedBy: userId } },
+    { new: true }
   ).lean();
 
   if (!scannedTicket) {
-    const alreadyScannedTicket = await Ticket.findById(ticket._id)
-      .select("code seat pricingName price isScanned scannedAt")
-      .lean();
-    const error = new Error("Ticket deja utilise.");
+    const alreadyScannedTicket = await Ticket.findById(ticket._id).
+    select("code status seat pricingName price isScanned scannedAt cancelledAt").
+    lean();
+    const error = new Error("Ticket déjà utilisé.");
     error.status = 409;
     error.code = "ALREADY_SCANNED";
     error.details = {
-      ticket: serializeScanTicket(alreadyScannedTicket || ticket),
+      ticket: serializeScanTicket(alreadyScannedTicket || ticket)
     };
     throw error;
   }
 
   const remainingTickets = await Ticket.countDocuments({
-    bookingId: ticket.bookingId && ticket.bookingId._id
-      ? ticket.bookingId._id
-      : ticket.bookingId,
-    isScanned: false,
+    bookingId: ticket.bookingId && ticket.bookingId._id ?
+    ticket.bookingId._id :
+    ticket.bookingId,
+    status: { $nin: ["cancelled", "scanned"] },
+    isScanned: false
   });
 
   if (remainingTickets === 0) {
     const bookingIdValue =
-      ticket.bookingId && ticket.bookingId._id ? ticket.bookingId._id : ticket.bookingId;
+    ticket.bookingId && ticket.bookingId._id ? ticket.bookingId._id : ticket.bookingId;
     if (bookingIdValue) {
       await Booking.updateOne(
         { _id: bookingIdValue, status: "confirmed" },
-        { $set: { status: "used" } },
+        { $set: { status: "used" } }
       );
     }
   }
 
   return {
     status: "accepted",
-    message: "Ticket valide. Acces autorise.",
+    message: "Ticket valide. Accès autorisé.",
     ticket: serializeScanTicket(scannedTicket),
     booking: {
       bookingNumber: booking.bookingNumber || "",
       status: remainingTickets === 0 ? "used" : booking.status || "confirmed",
-      paymentStatus: booking.paymentStatus || "",
+      paymentStatus: booking.paymentStatus || ""
     },
     session: serializeSessionDetails(expectedSession),
-    remainingTicketsInBooking: remainingTickets,
+    remainingTicketsInBooking: remainingTickets
   };
 };
 
 module.exports = {
   listTickets,
-  scanTicket,
+  scanTicket
 };

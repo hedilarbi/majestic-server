@@ -171,12 +171,81 @@ const formatDate = (value) => {
   }).format(date);
 };
 
+const formatDateTime = (value) => {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const datePart = new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(date);
+  const timePart = new Intl.DateTimeFormat("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+
+  return `${datePart} à ${timePart}`;
+};
+
 const formatCurrency = (value) => {
   const amount =
     typeof value === "number" ? value : Number.parseFloat(String(value));
   const safeAmount = Number.isFinite(amount) ? amount : 0;
   return `${safeAmount.toFixed(2)} DT`;
 };
+
+const resolvePosterSource = (session) => {
+  const event =
+    session?.eventId && typeof session.eventId === "object" ? session.eventId : null;
+
+  return (
+    normalizeText(event?.poster) ||
+    normalizeText(event?.affiche) ||
+    normalizeText(event?.image) ||
+    normalizeText(session?.poster)
+  );
+};
+
+const fetchImageBuffer = async (source) => {
+  const safeSource = normalizeText(source);
+  if (!safeSource) {
+    return null;
+  }
+
+  try {
+    if (/^https?:\/\//i.test(safeSource)) {
+      const response = await fetch(safeSource);
+      if (!response.ok) {
+        return null;
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      return Buffer.from(arrayBuffer);
+    }
+
+    const directPath = path.isAbsolute(safeSource)
+      ? safeSource
+      : path.resolve(process.cwd(), safeSource);
+
+    if (fs.existsSync(directPath)) {
+      return fs.readFileSync(directPath);
+    }
+  } catch (_error) {
+    return null;
+  }
+
+  return null;
+};
+
+const buildEventPosterBuffer = async (session) =>
+  fetchImageBuffer(resolvePosterSource(session));
 
 const resolveRoomName = async (roomId) => {
   const rawRoomId = normalizeText(roomId);
@@ -216,38 +285,297 @@ const resolveCustomer = (booking) => {
 
 const buildTicketQrPayload = ({ ticket }) => normalizeText(ticket?.code);
 
-const buildTicketPdfBuffer = async ({
-  booking,
-  session,
-  roomName,
-  customerName,
-  ticket,
-  ticketIndex,
-  totalTickets,
-}) => {
-  const PDFDocument = getPdfKit();
+const buildTicketQrBuffer = async (ticket) => {
   const QRCode = getQrCode();
-
-  const event =
-    session?.eventId && typeof session.eventId === "object" ? session.eventId : null;
-  const eventName = normalizeText(event?.name) || "Evenement";
-  const sessionDate = formatDate(session?.date);
-  const sessionTime = normalizeText(session?.sessionTime) || "";
-  const bookingCode = normalizeText(booking?.bookingNumber) || "N/A";
-  const seatLabel = `${ticket?.seat?.row || ""}${ticket?.seat?.col ?? ""}`;
-
   const payload = buildTicketQrPayload({ ticket });
-  const qrBuffer = await QRCode.toBuffer(payload, {
+
+  return QRCode.toBuffer(payload, {
     type: "png",
     width: 280,
     margin: 1,
     errorCorrectionLevel: "M",
   });
+};
+
+const renderTicketPdfPage = ({
+  doc,
+  booking,
+  session,
+  roomName,
+  customerName,
+  customerEmail,
+  ticket,
+  ticketIndex,
+  totalTickets,
+  qrBuffer,
+  posterBuffer,
+}) => {
+  doc.addPage({
+    size: "A4",
+    layout: "landscape",
+    margin: 0,
+  });
+  const { width, height } = doc.page;
+
+  const event =
+    session?.eventId && typeof session.eventId === "object" ? session.eventId : null;
+  const eventName = normalizeText(event?.name) || "Événement";
+  const sessionDate = formatDate(session?.date);
+  const sessionTime = normalizeText(session?.sessionTime) || "";
+  const bookingCode = normalizeText(booking?.bookingNumber) || "N/A";
+  const bookingCreatedAt = formatDateTime(booking?.createdAt);
+  const seatLabel = `${ticket?.seat?.row || ""}${ticket?.seat?.col ?? ""}`;
+  const ticketCode = normalizeText(ticket?.code) || "-";
+  const performedBy = normalizeEmail(customerEmail) || normalizeText(customerName) || "Client";
+  const pageMargin = 24;
+  const cardX = pageMargin;
+  const cardY = pageMargin;
+  const cardWidth = width - pageMargin * 2;
+  const cardHeight = height - pageMargin * 2;
+  const leftWidth = 286;
+  const rightWidth = cardWidth - leftWidth;
+  const leftX = cardX;
+  const rightX = cardX + leftWidth;
+  const posterX = leftX + 18;
+  const posterY = cardY + 18;
+  const posterWidth = leftWidth - 36;
+  const posterHeight = 278;
+  const seatBadgeY = cardY + cardHeight - 92;
+  const infoY = posterY + posterHeight + 18;
+
+  doc.rect(0, 0, width, height).fill("#eef3fb");
+
+  doc
+    .roundedRect(cardX, cardY, cardWidth, cardHeight, 18)
+    .lineWidth(1)
+    .fillAndStroke("#ffffff", "#d5dfef");
+
+  doc
+    .roundedRect(leftX, cardY, leftWidth, cardHeight, 18)
+    .fill("#0d1e3d");
+  doc
+    .rect(leftX + leftWidth - 20, cardY, 20, cardHeight)
+    .fill("#0d1e3d");
+
+  if (posterBuffer) {
+    doc.save();
+    doc.roundedRect(posterX, posterY, posterWidth, posterHeight, 14).clip();
+    doc.image(posterBuffer, posterX, posterY, {
+      fit: [posterWidth, posterHeight],
+      align: "center",
+      valign: "center",
+    });
+    doc.restore();
+  } else {
+    const fallbackGradient = doc.linearGradient(
+      posterX,
+      posterY,
+      posterX + posterWidth,
+      posterY + posterHeight,
+    );
+    fallbackGradient.stop(0, "#1034a6").stop(1, "#74d0f1");
+    doc
+      .roundedRect(posterX, posterY, posterWidth, posterHeight, 14)
+      .fill(fallbackGradient);
+    doc
+      .fillColor("#ffffff")
+      .font("Helvetica-Bold")
+      .fontSize(24)
+      .text("LE MAJESTIC", posterX + 24, posterY + 120, {
+        width: posterWidth - 48,
+        align: "center",
+      });
+  }
+
+  doc
+    .fillColor("#ffffff")
+    .font("Helvetica-Bold")
+    .fontSize(22)
+    .text(eventName, leftX + 18, infoY, {
+      width: leftWidth - 36,
+      align: "left",
+    });
+
+  doc
+    .fillColor("#c8d8f5")
+    .font("Helvetica")
+    .fontSize(12)
+    .text(
+      `${sessionDate}${sessionTime ? ` - ${sessionTime}` : ""}`,
+      leftX + 18,
+      infoY + 48,
+      {
+        width: leftWidth - 36,
+      },
+    );
+
+  doc
+    .roundedRect(leftX + 18, seatBadgeY, leftWidth - 36, 54, 14)
+    .fill("#74d0f1");
+  doc
+    .fillColor("#0d1e3d")
+    .font("Helvetica-Bold")
+    .fontSize(12)
+    .text("Numéro du siège", leftX + 36, seatBadgeY + 10, {
+      width: leftWidth - 72,
+      align: "center",
+    });
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(24)
+    .text(seatLabel || "-", leftX + 36, seatBadgeY + 24, {
+      width: leftWidth - 72,
+      align: "center",
+    });
+
+  doc
+    .strokeColor("#d5dfef")
+    .lineWidth(1)
+    .moveTo(rightX, cardY + 22)
+    .lineTo(rightX, cardY + cardHeight - 22)
+    .stroke();
+
+  doc
+    .fillColor("#1034a6")
+    .font("Helvetica-Bold")
+    .fontSize(12)
+    .text("Billet électronique", rightX + 28, cardY + 26, {
+      width: rightWidth - 56,
+    });
+
+  doc
+    .fillColor("#111827")
+    .font("Helvetica-Bold")
+    .fontSize(15)
+    .text(`N° de réservation : ${bookingCode}`, rightX + 28, cardY + 60, {
+      width: rightWidth - 56,
+    });
+
+  doc
+    .fillColor("#4b5563")
+    .font("Helvetica")
+    .fontSize(11)
+    .text(`Commande effectuée par ${performedBy} le`, rightX + 28, cardY + 94, {
+      width: rightWidth - 56,
+    });
+
+  doc
+    .fillColor("#111827")
+    .font("Helvetica-Bold")
+    .fontSize(14)
+    .text(bookingCreatedAt || "-", rightX + 28, cardY + 114, {
+      width: rightWidth - 56,
+    });
+
+  const qrBoxSize = 172;
+  const qrBoxX = rightX + 28;
+  const qrBoxY = cardY + 154;
+  doc
+    .roundedRect(qrBoxX, qrBoxY, qrBoxSize, qrBoxSize, 14)
+    .fillAndStroke("#f8fbff", "#d5dfef");
+  doc.image(qrBuffer, qrBoxX + 16, qrBoxY + 16, {
+    width: qrBoxSize - 32,
+    height: qrBoxSize - 32,
+  });
+
+  const pricingBoxX = qrBoxX + qrBoxSize + 20;
+  const pricingBoxWidth = rightWidth - (pricingBoxX - rightX) - 28;
+  const pricingBoxHeight = 108;
+  const codeBoxY = qrBoxY + pricingBoxHeight + 16;
+  doc
+    .roundedRect(pricingBoxX, qrBoxY, pricingBoxWidth, pricingBoxHeight, 14)
+    .fill("#f3f7fe");
+  doc
+    .fillColor("#6b7280")
+    .font("Helvetica-Bold")
+    .fontSize(10)
+    .text("TARIF", pricingBoxX + 16, qrBoxY + 14, { width: pricingBoxWidth - 32 });
+  doc
+    .fillColor("#111827")
+    .font("Helvetica-Bold")
+    .fontSize(16)
+    .text(normalizeText(ticket?.pricingName) || "Tarif", pricingBoxX + 16, qrBoxY + 30, {
+      width: pricingBoxWidth - 32,
+    });
+  doc
+    .fillColor("#6b7280")
+    .font("Helvetica-Bold")
+    .fontSize(10)
+    .text("PRIX", pricingBoxX + 16, qrBoxY + 66, { width: pricingBoxWidth - 32 });
+  doc
+    .fillColor("#1034a6")
+    .font("Helvetica-Bold")
+    .fontSize(18)
+    .text(formatCurrency(ticket?.price), pricingBoxX + 16, qrBoxY + 80, {
+      width: pricingBoxWidth - 32,
+    });
+
+  doc
+    .roundedRect(pricingBoxX, codeBoxY, pricingBoxWidth, 72, 14)
+    .fill("#f8fbff");
+  doc
+    .fillColor("#6b7280")
+    .font("Helvetica-Bold")
+    .fontSize(10)
+    .text("CODE BILLET", pricingBoxX + 16, codeBoxY + 14, {
+      width: pricingBoxWidth - 32,
+    });
+  doc
+    .fillColor("#111827")
+    .font("Helvetica-Bold")
+    .fontSize(15)
+    .text(ticketCode, pricingBoxX + 16, codeBoxY + 32, {
+      width: pricingBoxWidth - 32,
+    });
+  doc
+    .fillColor("#6b7280")
+    .font("Helvetica")
+    .fontSize(10)
+    .text(`Ticket ${ticketIndex + 1}/${totalTickets}`, pricingBoxX + 16, codeBoxY + 54, {
+      width: pricingBoxWidth - 32,
+    });
+
+  doc
+    .roundedRect(rightX + 28, cardY + cardHeight - 140, rightWidth - 56, 110, 14)
+    .lineWidth(1)
+    .fillAndStroke("#fff8f1", "#f5cfa8");
+  doc
+    .fillColor("#8a4b08")
+    .font("Helvetica-Bold")
+    .fontSize(10.5)
+    .text(
+      "Ce billet est unique - Une fois scanné à l'entrée, aucun autre exemplaire de ce billet ne sera accepté au contrôle. Conservez ce billet jusqu'à la fin de votre séance.",
+      rightX + 44,
+      cardY + cardHeight - 122,
+      {
+        width: rightWidth - 88,
+        align: "left",
+      },
+    );
+};
+
+const buildTicketPdfBuffer = async ({
+  booking,
+  session,
+  roomName,
+  customerName,
+  customerEmail,
+  ticket,
+  ticketIndex,
+  totalTickets,
+  posterBuffer,
+}) => {
+  const PDFDocument = getPdfKit();
+  const [qrBuffer, resolvedPosterBuffer] = await Promise.all([
+    buildTicketQrBuffer(ticket),
+    posterBuffer === undefined ? buildEventPosterBuffer(session) : posterBuffer,
+  ]);
 
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       autoFirstPage: false,
       size: "A4",
+      layout: "landscape",
       margin: 0,
       info: {
         Title: `Billet ${ticket?.code || ""}`,
@@ -260,112 +588,78 @@ const buildTicketPdfBuffer = async ({
     doc.on("error", reject);
     doc.on("end", () => resolve(Buffer.concat(chunks)));
 
-    doc.addPage();
-    const { width, height } = doc.page;
+    renderTicketPdfPage({
+      doc,
+      booking,
+      session,
+      roomName,
+      customerName,
+      customerEmail,
+      ticket,
+      ticketIndex,
+      totalTickets,
+      qrBuffer,
+      posterBuffer: resolvedPosterBuffer,
+    });
 
-    doc.rect(0, 0, width, height).fill("#04070f");
+    doc.end();
+  });
+};
 
-    const heroGradient = doc.linearGradient(0, 0, width, 0);
-    heroGradient.stop(0, "#1034a6").stop(1, "#74d0f1");
-    doc.rect(0, 0, width, 92).fill(heroGradient);
-    doc
-      .fillColor("#ffffff")
-      .font("Helvetica-Bold")
-      .fontSize(28)
-      .text("MAJESTIC", 36, 30, { width: 220 });
-    doc
-      .font("Helvetica")
-      .fontSize(11)
-      .text("Cinema ticket", 36, 62, { width: 220 });
+const buildBookingTicketsPdfBuffer = async ({
+  booking,
+  session,
+  roomName,
+  customerName,
+  customerEmail,
+  tickets,
+}) => {
+  const PDFDocument = getPdfKit();
+  const safeTickets = Array.isArray(tickets) ? tickets.filter(Boolean) : [];
 
-    const cardX = 34;
-    const cardY = 118;
-    const cardWidth = width - 68;
-    const cardHeight = height - 178;
-    doc
-      .roundedRect(cardX, cardY, cardWidth, cardHeight, 18)
-      .lineWidth(1)
-      .fillAndStroke("#0b1220", "#26354e");
+  if (!safeTickets.length) {
+    const error = new Error("No tickets to export");
+    error.status = 400;
+    throw error;
+  }
 
-    doc
-      .roundedRect(cardX + 22, cardY + 22, cardWidth - 44, 62, 12)
-      .lineWidth(1)
-      .fillAndStroke("#131f38", "#2e4666");
+  const [qrBuffers, posterBuffer] = await Promise.all([
+    Promise.all(safeTickets.map((ticket) => buildTicketQrBuffer(ticket))),
+    buildEventPosterBuffer(session),
+  ]);
 
-    doc
-      .fillColor("#74d0f1")
-      .font("Helvetica-Bold")
-      .fontSize(14)
-      .text("Billet officiel", cardX + 36, cardY + 40);
-    doc
-      .fillColor("#d8e7ff")
-      .font("Helvetica-Bold")
-      .fontSize(24)
-      .text(eventName, cardX + 36, cardY + 104, {
-        width: cardWidth - 300,
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({
+      autoFirstPage: false,
+      size: "A4",
+      layout: "landscape",
+      margin: 0,
+      info: {
+        Title: `Billets ${booking?.bookingNumber || ""}`,
+        Author: "Majestic",
+      },
+    });
+
+    const chunks = [];
+    doc.on("data", (chunk) => chunks.push(chunk));
+    doc.on("error", reject);
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+
+    safeTickets.forEach((ticket, index) => {
+      renderTicketPdfPage({
+        doc,
+        booking,
+        session,
+        roomName,
+        customerName,
+        customerEmail,
+        ticket,
+        ticketIndex: index,
+        totalTickets: safeTickets.length,
+        qrBuffer: qrBuffers[index],
+        posterBuffer,
       });
-
-    doc
-      .fillColor("#9fb6d8")
-      .font("Helvetica")
-      .fontSize(12)
-      .text(`Seance: ${sessionDate}${sessionTime ? ` • ${sessionTime}` : ""}`, cardX + 36, cardY + 150)
-      .text(`Salle: ${roomName || "Salle"}`, cardX + 36, cardY + 172)
-      .text(`Siege: ${seatLabel || "-"}`, cardX + 36, cardY + 194)
-      .text(
-        `Tarif: ${ticket?.pricingName || "Tarif"} (${formatCurrency(ticket?.price)})`,
-        cardX + 36,
-        cardY + 216,
-      )
-      .text(`Client: ${customerName}`, cardX + 36, cardY + 238)
-      .text(`Code booking: ${bookingCode}`, cardX + 36, cardY + 260)
-      .text(`Code ticket: ${ticket?.code || ""}`, cardX + 36, cardY + 282);
-
-    const qrBoxSize = 194;
-    const qrBoxX = width - qrBoxSize - 56;
-    const qrBoxY = cardY + 112;
-    doc
-      .roundedRect(qrBoxX, qrBoxY, qrBoxSize, qrBoxSize, 14)
-      .lineWidth(1)
-      .fillAndStroke("#111b31", "#3f5e87");
-    doc.image(qrBuffer, qrBoxX + 17, qrBoxY + 17, { width: 160, height: 160 });
-
-    doc
-      .fillColor("#9fb6d8")
-      .font("Helvetica")
-      .fontSize(10)
-      .text("QR a presenter a l'entree", qrBoxX, qrBoxY + qrBoxSize + 10, {
-        width: qrBoxSize,
-        align: "center",
-      });
-
-    doc
-      .lineWidth(1)
-      .strokeColor("#24334d")
-      .moveTo(cardX + 24, height - 98)
-      .lineTo(width - 58, height - 98)
-      .stroke();
-
-    doc
-      .fillColor("#6e85a8")
-      .font("Helvetica")
-      .fontSize(9.5)
-      .text(
-        "Billet personnel. Toute tentative de reutilisation apres scan sera refusee.",
-        cardX + 24,
-        height - 84,
-        { width: cardWidth - 48 },
-      );
-
-    doc
-      .fillColor("#74d0f1")
-      .font("Helvetica-Bold")
-      .fontSize(10.5)
-      .text(
-        `Ticket ${ticketIndex + 1}/${totalTickets}`,
-        cardX + 24,
-        height - 54,
-      );
+    });
 
     doc.end();
   });
@@ -376,9 +670,11 @@ const buildTicketPdfAttachments = async ({
   session,
   roomName,
   customerName,
+  customerEmail,
   tickets,
 }) => {
   const list = Array.isArray(tickets) ? tickets : [];
+  const posterBuffer = await buildEventPosterBuffer(session);
 
   return Promise.all(
     list.map(async (ticket, index) => {
@@ -388,9 +684,11 @@ const buildTicketPdfAttachments = async ({
         session,
         roomName,
         customerName,
+        customerEmail,
         ticket,
         ticketIndex: index,
         totalTickets: list.length || 1,
+        posterBuffer,
       });
 
       const bookingToken = toSafeFileToken(booking?.bookingNumber, "booking");
@@ -412,10 +710,11 @@ const buildEmailHtml = ({
   session,
   roomName,
   hasLogo,
+  groupedPdf = false,
 }) => {
   const event =
     session?.eventId && typeof session.eventId === "object" ? session.eventId : null;
-  const eventName = normalizeText(event?.name) || "Evenement";
+  const eventName = normalizeText(event?.name) || "Événement";
   const sessionDate = formatDate(session?.date);
   const sessionTime = normalizeText(session?.sessionTime) || "";
   const safeTickets = Array.isArray(tickets) ? tickets : [];
@@ -443,7 +742,7 @@ const buildEmailHtml = ({
     <div style="margin:0;padding:24px 12px;background:#02050d;background-image:radial-gradient(circle at 12% 20%, rgba(16,52,166,0.28) 0%, transparent 40%),radial-gradient(circle at 88% 80%, rgba(116,208,241,0.2) 0%, transparent 40%);font-family:Arial,sans-serif;color:#f8fafc;">
       <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:700px;margin:0 auto;border:1px solid #25304a;border-radius:18px;overflow:hidden;background:#090f1d;">
         <tr>
-          <td style="padding:20px 24px;background:linear-gradient(90deg,#1034a6,#74d0f1);">
+          <td style="padding:20px 24px;background:linear-gradient(90deg,#74d0f1,#1034a6);">
             <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
               <tr>
                 <td align="left" valign="middle">
@@ -454,7 +753,7 @@ const buildEmailHtml = ({
                   }
                 </td>
                 <td align="right" valign="middle" style="color:#ffffff;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;">
-                  Billets confirmes
+                  Billets confirmés
                 </td>
               </tr>
             </table>
@@ -464,22 +763,26 @@ const buildEmailHtml = ({
           <td style="padding:24px;">
             <h2 style="margin:0 0 8px;font-size:24px;line-height:1.2;color:#ffffff;">Bonjour ${customerName},</h2>
             <p style="margin:0 0 18px;color:#9fb6d8;font-size:14px;line-height:1.6;">
-              Votre achat est confirme. Chaque billet est joint dans un PDF separe.
+              ${
+                groupedPdf
+                  ? "Votre achat est confirmé. Tous vos billets sont regroupés dans un seul PDF joint."
+                  : "Votre achat est confirmé. Chaque billet est joint dans un PDF séparé."
+              }
             </p>
 
             <div style="border:1px solid #25304a;border-radius:14px;padding:16px;background:#0f182c;">
-              <p style="margin:0 0 7px;color:#d7e4ff;font-size:14px;"><strong>Code booking:</strong> ${booking.bookingNumber || ""}</p>
-              <p style="margin:0 0 7px;color:#d7e4ff;font-size:14px;"><strong>Evenement:</strong> ${eventName}</p>
-              <p style="margin:0 0 7px;color:#d7e4ff;font-size:14px;"><strong>Seance:</strong> ${sessionDate}${
+              <p style="margin:0 0 7px;color:#d7e4ff;font-size:14px;"><strong>Code réservation :</strong> ${booking.bookingNumber || ""}</p>
+              <p style="margin:0 0 7px;color:#d7e4ff;font-size:14px;"><strong>Événement :</strong> ${eventName}</p>
+              <p style="margin:0 0 7px;color:#d7e4ff;font-size:14px;"><strong>Séance :</strong> ${sessionDate}${
                 sessionTime ? ` - ${sessionTime}` : ""
               }</p>
-              <p style="margin:0 0 7px;color:#d7e4ff;font-size:14px;"><strong>Salle:</strong> ${roomName || "Salle"}</p>
-              <p style="margin:0;color:#d7e4ff;font-size:14px;"><strong>Sieges:</strong> ${seats || "-"}</p>
+              <p style="margin:0 0 7px;color:#d7e4ff;font-size:14px;"><strong>Salle :</strong> ${roomName || "Salle"}</p>
+              <p style="margin:0;color:#d7e4ff;font-size:14px;"><strong>Sièges :</strong> ${seats || "-"}</p>
             </div>
 
             <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin-top:16px;border:1px solid #25304a;border-radius:12px;overflow:hidden;background:#0c1424;">
               <tr>
-                <th align="left" style="padding:10px 12px;background:#121f37;color:#74d0f1;font-size:12px;text-transform:uppercase;letter-spacing:1px;">Siege</th>
+                <th align="left" style="padding:10px 12px;background:#121f37;color:#74d0f1;font-size:12px;text-transform:uppercase;letter-spacing:1px;">Siège</th>
                 <th align="left" style="padding:10px 12px;background:#121f37;color:#74d0f1;font-size:12px;text-transform:uppercase;letter-spacing:1px;">Tarif</th>
                 <th align="left" style="padding:10px 12px;background:#121f37;color:#74d0f1;font-size:12px;text-transform:uppercase;letter-spacing:1px;">Prix</th>
                 <th align="left" style="padding:10px 12px;background:#121f37;color:#74d0f1;font-size:12px;text-transform:uppercase;letter-spacing:1px;">Code ticket</th>
@@ -488,14 +791,17 @@ const buildEmailHtml = ({
             </table>
 
             <p style="margin:16px 0 0;color:#9fb6d8;font-size:13px;line-height:1.6;">
-              Nombre de PDF joints: <strong style="color:#ffffff;">${safeTickets.length}</strong><br />
-              Presentez le QR code de chaque billet a l'entree.
+              Nombre de billets : <strong style="color:#ffffff;">${safeTickets.length}</strong><br />
+              Nombre de PDF joints : <strong style="color:#ffffff;">${
+                groupedPdf ? 1 : safeTickets.length
+              }</strong><br />
+              Présentez le QR code de chaque billet à l'entrée.
             </p>
           </td>
         </tr>
         <tr>
           <td style="padding:14px 24px;border-top:1px solid #25304a;color:#6e85a8;font-size:12px;">
-            Equipe Majestic - Merci pour votre confiance
+            Équipe Majestic - Merci pour votre confiance
           </td>
         </tr>
       </table>
@@ -508,27 +814,53 @@ const buildEmailAttachments = async ({
   session,
   roomName,
   customerName,
+  customerEmail,
   tickets,
 }) => {
-  const ticketAttachments = await buildTicketPdfAttachments({
-    booking,
-    session,
-    roomName,
-    customerName,
-    tickets,
-  });
+  const sendGroupedPdf = String(booking?.bookingSource || "").toLowerCase() !== "ticket_office";
+  let ticketAttachments;
+
+  if (sendGroupedPdf) {
+    const pdfBuffer = await buildBookingTicketsPdfBuffer({
+      booking,
+      session,
+      roomName,
+      customerName,
+      customerEmail,
+      tickets,
+    });
+    const bookingToken = toSafeFileToken(booking?.bookingNumber, "booking");
+    ticketAttachments = [
+      {
+        filename: `${bookingToken}-billets.pdf`,
+        content: pdfBuffer,
+        contentType: "application/pdf",
+      },
+    ];
+  } else {
+    ticketAttachments = await buildTicketPdfAttachments({
+      booking,
+      session,
+      roomName,
+      customerName,
+      customerEmail,
+      tickets,
+    });
+  }
 
   const logoAttachment = getLogoAttachment();
   if (logoAttachment) {
     return {
       attachments: [...ticketAttachments, logoAttachment],
       hasLogo: true,
+      groupedPdf: sendGroupedPdf,
     };
   }
 
   return {
     attachments: ticketAttachments,
     hasLogo: false,
+    groupedPdf: sendGroupedPdf,
   };
 };
 
@@ -540,11 +872,11 @@ const fetchBookingContext = async (bookingId) => {
   }
 
   const booking = await Booking.findById(bookingId)
-    .select("bookingNumber userId customerContact sessionId createdAt")
+    .select("bookingNumber userId customerContact sessionId bookingSource createdAt")
     .populate({
       path: "sessionId",
       select: "date sessionTime roomId eventId",
-      populate: { path: "eventId", select: "name" },
+      populate: { path: "eventId", select: "name poster affiche image" },
     })
     .populate({ path: "userId", select: "firstName lastName email" })
     .lean();
@@ -609,10 +941,11 @@ const sendBookingTicketsEmail = async ({ bookingId }) => {
     session: context.session,
     roomName: context.roomName,
     customerName: context.customer.fullName,
+    customerEmail: context.customer.email,
     tickets: context.tickets,
   });
 
-  const subject = `Vos billets - ${context.booking.bookingNumber || "Reservation"}`;
+  const subject = `Vos billets - ${context.booking.bookingNumber || "Réservation"}`;
   const html = buildEmailHtml({
     customerName: context.customer.fullName,
     booking: context.booking,
@@ -620,6 +953,7 @@ const sendBookingTicketsEmail = async ({ bookingId }) => {
     session: context.session,
     roomName: context.roomName,
     hasLogo: emailAssets.hasLogo,
+    groupedPdf: emailAssets.groupedPdf,
   });
 
   await transporter.sendMail({
@@ -691,6 +1025,7 @@ const buildTicketPdfDownload = async ({ ticketId, customerId } = {}) => {
     session: context.session,
     roomName: context.roomName,
     customerName: context.customer.fullName,
+    customerEmail: context.customer.email,
     ticket: ticketForPdf,
     ticketIndex: 0,
     totalTickets: 1,

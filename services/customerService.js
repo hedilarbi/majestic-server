@@ -6,6 +6,10 @@ const User = require("../models/User");
 const EmailVerification = require("../models/EmailVerification");
 const SeatReservation = require("../models/SeatReservation");
 const SeatLock = require("../models/SeatLock");
+const {
+  syncSubscriptionSalesForCustomer,
+} = require("./subscriptionSalesService");
+const { enqueueCustomerOtpEmail } = require("./customerOtpDeliveryService");
 
 const SALT_ROUNDS = 12;
 const CUSTOMER_ROLE = "customer";
@@ -103,9 +107,8 @@ const createEmailVerification = async (
   const expiresAt = new Date(
     now.getTime() + OTP_EXPIRATION_MINUTES * 60 * 1000,
   );
-  //const otp = generateOtp();
-  const otp = "123456"; // Pour les tests uniquement, a remplacer par la ligne au-dessus en production
-  return EmailVerification.create({
+  const otp = generateOtp();
+  const verification = await EmailVerification.create({
     email,
     purpose,
     otp,
@@ -114,24 +117,124 @@ const createEmailVerification = async (
     resendCount,
     lastSentAt: now,
   });
+
+  try {
+    enqueueCustomerOtpEmail({ verificationId: verification._id });
+  } catch (error) {
+    console.error(
+      `[customer-otp-email] enqueue failed for verification ${verification._id}`,
+      error && error.stack ? error.stack : error,
+    );
+  }
+
+  return verification;
+};
+
+const refreshEmailVerificationOtp = async (
+  email,
+  { resendCount = 0 } = {},
+) => {
+  await EmailVerification.deleteMany({
+    email,
+    purpose: OTP_PURPOSE_EMAIL_VERIFICATION,
+  });
+
+  await createEmailVerification(email, {
+    resendCount,
+    purpose: OTP_PURPOSE_EMAIL_VERIFICATION,
+  });
+};
+
+const isVerificationExpired = (verification, now = new Date()) => {
+  if (!verification?.expiresAt) {
+    return false;
+  }
+
+  const expiresAt = new Date(verification.expiresAt);
+  if (Number.isNaN(expiresAt.getTime())) {
+    return true;
+  }
+
+  return expiresAt.getTime() <= now.getTime();
+};
+
+const sendOrReuseEmailVerificationOtp = async (email) => {
+  const normalizedEmail = normalizeEmail(email, { required: true });
+  const previous = await EmailVerification.findOne({
+    email: normalizedEmail,
+    purpose: OTP_PURPOSE_EMAIL_VERIFICATION,
+  }).sort({ createdAt: -1 });
+
+  if (previous && !isVerificationExpired(previous)) {
+    const resendCount = (previous.resendCount || 0) + 1;
+    await EmailVerification.updateOne(
+      { _id: previous._id },
+      {
+        $set: {
+          resendCount,
+          lastSentAt: new Date(),
+        },
+      },
+    );
+
+    try {
+      enqueueCustomerOtpEmail({ verificationId: previous._id });
+    } catch (error) {
+      console.error(
+        `[customer-otp-email] enqueue failed for verification ${previous._id}`,
+        error && error.stack ? error.stack : error,
+      );
+    }
+
+    return previous;
+  }
+
+  const resendCount = previous ? (previous.resendCount || 0) + 1 : 0;
+  await refreshEmailVerificationOtp(normalizedEmail, { resendCount });
+  return EmailVerification.findOne({
+    email: normalizedEmail,
+    purpose: OTP_PURPOSE_EMAIL_VERIFICATION,
+  }).sort({ createdAt: -1 });
 };
 
 const assertOtpVerification = async ({ email, otp, purpose }) => {
-  const verification = await EmailVerification.findOne({
+  const verifications = await EmailVerification.find({
     email,
     purpose,
   }).sort({ createdAt: -1 });
 
-  if (!verification) {
-    const error = new Error("Code OTP invalide ou expire");
+  if (!verifications.length) {
+    const error = new Error("Code OTP invalide ou expiré");
     error.status = 400;
     throw error;
   }
 
   const now = new Date();
-  if (verification.expiresAt && verification.expiresAt <= now) {
+  const matchingVerification = verifications.find(
+    (verification) => verification.otp === otp,
+  );
+
+  if (matchingVerification) {
+    if (isVerificationExpired(matchingVerification, now)) {
+      await EmailVerification.deleteMany({ email, purpose });
+      const error = new Error("Code OTP expiré");
+      error.status = 400;
+      throw error;
+    }
+
+    if (matchingVerification.attempts >= MAX_OTP_ATTEMPTS) {
+      const error = new Error("Nombre maximum de tentatives atteint");
+      error.status = 429;
+      throw error;
+    }
+
+    return matchingVerification;
+  }
+
+  const verification = verifications[0];
+  if (isVerificationExpired(verification, now)) {
     await EmailVerification.deleteMany({ email, purpose });
-    const error = new Error("Code OTP expire");
+    const error = new Error("Code OTP expiré");
     error.status = 400;
     throw error;
   }
@@ -202,7 +305,7 @@ const createCustomer = async ({ guestId, tokenRole, payload }) => {
   }
 
   if (tokenRole && tokenRole !== GUEST_ROLE) {
-    const error = new Error("Acces guest requis");
+    const error = new Error("Accès guest requis");
     error.status = 403;
     throw error;
   }
@@ -221,7 +324,7 @@ const createCustomer = async ({ guestId, tokenRole, payload }) => {
   }
 
   if (guestUser.role !== GUEST_ROLE) {
-    const error = new Error("Acces guest requis");
+    const error = new Error("Accès guest requis");
     error.status = 403;
     throw error;
   }
@@ -236,7 +339,7 @@ const createCustomer = async ({ guestId, tokenRole, payload }) => {
     _id: { $ne: guestId },
   });
   if (existingUser) {
-    const error = new Error("Compte avec cet email deja existant");
+    const error = new Error("Compte avec cet email déjà existant");
     error.status = 409;
     throw error;
   }
@@ -280,12 +383,11 @@ const createCustomer = async ({ guestId, tokenRole, payload }) => {
     throw error;
   }
 
-  await EmailVerification.deleteMany({
+  await refreshEmailVerificationOtp(normalizedEmail);
+
+  await syncSubscriptionSalesForCustomer({
+    userId: user._id,
     email: normalizedEmail,
-    purpose: OTP_PURPOSE_EMAIL_VERIFICATION,
-  });
-  await createEmailVerification(normalizedEmail, {
-    purpose: OTP_PURPOSE_EMAIL_VERIFICATION,
   });
 
   const token = buildToken(user);
@@ -361,6 +463,15 @@ const loginCustomer = async ({ email, password, guestId, tokenRole }) => {
     });
   }
 
+  await syncSubscriptionSalesForCustomer({
+    userId: user._id,
+    email: normalizedEmail,
+  });
+
+  if (!user.emailVerified) {
+    await sendOrReuseEmailVerificationOtp(normalizedEmail);
+  }
+
   const token = buildToken(user);
 
   return { token, user: sanitizeUser(user) };
@@ -387,7 +498,7 @@ const getCustomerById = async (id) => {
   }
 
   if (user.role !== CUSTOMER_ROLE) {
-    const error = new Error("Acces client requis");
+    const error = new Error("Accès client requis");
     error.status = 403;
     throw error;
   }
@@ -416,7 +527,7 @@ const updateCustomerProfile = async (id, updates) => {
   }
 
   if (existingUser.role !== CUSTOMER_ROLE) {
-    const error = new Error("Acces client requis");
+    const error = new Error("Accès client requis");
     error.status = 403;
     throw error;
   }
@@ -456,7 +567,7 @@ const updateCustomerProfile = async (id, updates) => {
       _id: { $ne: id },
     });
     if (emailOwner) {
-      const error = new Error("Compte avec cet email deja existant");
+      const error = new Error("Compte avec cet email déjà existant");
       error.status = 409;
       throw error;
     }
@@ -471,6 +582,13 @@ const updateCustomerProfile = async (id, updates) => {
     const error = new Error("Utilisateur introuvable");
     error.status = 404;
     throw error;
+  }
+
+  if (updateData.email) {
+    await syncSubscriptionSalesForCustomer({
+      userId: user._id,
+      email: updateData.email,
+    });
   }
 
   return sanitizeUser(user);
@@ -497,7 +615,7 @@ const resetCustomerPassword = async ({
   const normalizedNewPassword = requirePassword(newPassword);
 
   if (normalizedOldPassword === normalizedNewPassword) {
-    const error = new Error("Le nouveau mot de passe doit etre different");
+    const error = new Error("Le nouveau mot de passe doit être différent");
     error.status = 400;
     throw error;
   }
@@ -510,7 +628,7 @@ const resetCustomerPassword = async ({
   }
 
   if (user.role !== CUSTOMER_ROLE) {
-    const error = new Error("Acces client requis");
+    const error = new Error("Accès client requis");
     error.status = 403;
     throw error;
   }
@@ -560,7 +678,7 @@ const requestCustomerPasswordReset = async ({ email }) => {
     purpose: OTP_PURPOSE_PASSWORD_RESET,
   });
 
-  return { message: "Code de reinitialisation envoye" };
+  return { message: "Code de réinitialisation envoyé" };
 };
 
 const resendCustomerPasswordResetOtp = async ({ email }) => {
@@ -592,7 +710,7 @@ const resendCustomerPasswordResetOtp = async ({ email }) => {
     purpose: OTP_PURPOSE_PASSWORD_RESET,
   });
 
-  return { message: "Code de reinitialisation renvoye" };
+  return { message: "Code de réinitialisation renvoyé" };
 };
 
 const confirmCustomerPasswordReset = async ({ email, otp, newPassword }) => {
@@ -673,28 +791,14 @@ const resendCustomerOtp = async ({ email }) => {
   }
 
   if (user.emailVerified) {
-    const error = new Error("Email deja verifie");
+    const error = new Error("Email déjà vérifié");
     error.status = 400;
     throw error;
   }
 
-  const previous = await EmailVerification.findOne({
-    email: normalizedEmail,
-    purpose: OTP_PURPOSE_EMAIL_VERIFICATION,
-  }).sort({ createdAt: -1 });
+  await sendOrReuseEmailVerificationOtp(normalizedEmail);
 
-  const resendCount = previous ? (previous.resendCount || 0) + 1 : 0;
-
-  await EmailVerification.deleteMany({
-    email: normalizedEmail,
-    purpose: OTP_PURPOSE_EMAIL_VERIFICATION,
-  });
-  await createEmailVerification(normalizedEmail, {
-    resendCount,
-    purpose: OTP_PURPOSE_EMAIL_VERIFICATION,
-  });
-
-  return { message: "Code OTP renvoye" };
+  return { message: "Code OTP renvoyé" };
 };
 
 module.exports = {

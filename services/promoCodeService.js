@@ -47,6 +47,29 @@ const normalizePromoCode = (value) => {
   return normalized;
 };
 
+const PROMO_CODE_PATTERN = /^[A-Z]{3}\d{3}$/;
+const ALLOWED_AVAILABILITIES = new Set(["public", "private"]);
+
+const normalizeAvailability = (value, fallback = "public") => {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return ALLOWED_AVAILABILITIES.has(normalized) ? normalized : fallback;
+};
+
+const generatePromoCodeCandidate = () => {
+  const letters = Array.from({ length: 3 }, () =>
+    String.fromCharCode(65 + Math.floor(Math.random() * 26)),
+  ).join("");
+  const digits = Math.floor(Math.random() * 1000)
+    .toString()
+    .padStart(3, "0");
+
+  return `${letters}${digits}`;
+};
+
 const toAmount = (value) => {
   const numeric = typeof value === "number" ? value : Number.parseFloat(value);
   return Number.isFinite(numeric) ? numeric : 0;
@@ -141,7 +164,7 @@ const validatePromoCodeForCheckout = async ({
   }
 
   if (promoDoc.expiresAt && new Date(promoDoc.expiresAt).getTime() < now.getTime()) {
-    const error = new Error("Ce code promo est expire.");
+    const error = new Error("Ce code promo est expiré.");
     error.status = 409;
     throw error;
   }
@@ -250,6 +273,9 @@ const normalizePayload = (payload) => {
   if (Object.prototype.hasOwnProperty.call(payload, "isActive")) {
     data.isActive = Boolean(payload.isActive);
   }
+  if (Object.prototype.hasOwnProperty.call(payload, "availability")) {
+    data.availability = normalizeAvailability(payload.availability);
+  }
 
   return data;
 };
@@ -283,6 +309,44 @@ const validatePayload = (data, { isUpdate } = {}) => {
     error.status = 400;
     throw error;
   }
+
+  if (data.code && !PROMO_CODE_PATTERN.test(data.code)) {
+    const error = new Error(
+      "Le code promo doit contenir 3 lettres majuscules suivies de 3 chiffres.",
+    );
+    error.status = 400;
+    throw error;
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(data, "availability") &&
+    !ALLOWED_AVAILABILITIES.has(data.availability)
+  ) {
+    const error = new Error("Availability invalide");
+    error.status = 400;
+    throw error;
+  }
+};
+
+const generateUniquePromoCode = async () => {
+  let attempts = 0;
+
+  while (attempts < 50) {
+    const candidate = generatePromoCodeCandidate();
+    const existing = await PromoCode.findOne({ code: candidate })
+      .select("_id")
+      .lean();
+
+    if (!existing) {
+      return candidate;
+    }
+
+    attempts += 1;
+  }
+
+  const error = new Error("Impossible de générer un code promo unique.");
+  error.status = 500;
+  throw error;
 };
 
 const createPromoCode = async (payload) => {
@@ -387,4 +451,5 @@ module.exports = {
   deletePromoCode,
   normalizePromoCode,
   validatePromoCodeForCheckout,
+  generateUniquePromoCode,
 };

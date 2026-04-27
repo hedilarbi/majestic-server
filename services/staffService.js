@@ -3,11 +3,24 @@ const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
 
 const User = require("../models/User");
+const {
+  STAFF_LOGIN_ROLES,
+  normalizePermissionList,
+} = require("../config/dashboardPermissions");
 
 const SALT_ROUNDS = 12;
-const STAFF_ROLES = ["admin", "ticket_office", "door_staff"];
+const STAFF_ROLES = [
+  "admin",
+  "super_admin",
+  "blog_manager",
+  "cashier",
+  "ticket_office",
+  "door_staff",
+];
 const ROLE_ALIASES = {
-  caissier: "ticket_office",
+  caissier: "cashier",
+  cashier: "cashier",
+  guichet: "ticket_office",
 };
 
 const normalizeRole = (role) => {
@@ -40,6 +53,56 @@ const buildToken = (user) => {
   );
 };
 
+const assertActorCanManageRole = ({ actor, targetRole, operation }) => {
+  if (!actor || !STAFF_ROLES.includes(actor.role)) {
+    const error = new Error("Accès staff requis");
+    error.status = 403;
+    throw error;
+  }
+
+  if (actor.role === "super_admin") {
+    return;
+  }
+
+  const safeTargetRole = normalizeRole(targetRole);
+
+  if (safeTargetRole === "admin" || safeTargetRole === "super_admin") {
+    const error = new Error(
+      `Seul le super administrateur peut ${operation} un compte administrateur`,
+    );
+    error.status = 403;
+    throw error;
+  }
+};
+
+const buildRoleDetails = ({
+  role,
+  permissions,
+  isActive,
+  baseRoleDetails = {},
+}) => {
+  const normalizedRole = normalizeRole(role);
+  const nextRoleDetails = { ...(baseRoleDetails || {}) };
+
+  if (normalizedRole === "admin") {
+    nextRoleDetails.permissions = normalizePermissionList(permissions);
+    nextRoleDetails.permissionsConfigured = true;
+    delete nextRoleDetails.isActive;
+    return nextRoleDetails;
+  }
+
+  delete nextRoleDetails.permissions;
+  delete nextRoleDetails.permissionsConfigured;
+
+  if (normalizedRole === "ticket_office" && typeof isActive === "boolean") {
+    nextRoleDetails.isActive = isActive;
+  } else if (normalizedRole !== "ticket_office") {
+    delete nextRoleDetails.isActive;
+  }
+
+  return nextRoleDetails;
+};
+
 const sanitizeUser = (user) => {
   if (!user) {
     return null;
@@ -59,6 +122,7 @@ const createStaff = async ({
   role,
   permissions,
   isActive,
+  requester,
 }) => {
   if (!email || !password || !role) {
     const error = new Error("Email, password, and role are required");
@@ -69,11 +133,17 @@ const createStaff = async ({
   const normalizedRole = normalizeRole(role);
   if (!STAFF_ROLES.includes(normalizedRole)) {
     const error = new Error(
-      "Role must be one of: admin, ticket_office, door_staff",
+      "Role must be one of: admin, super_admin, blog_manager, cashier, ticket_office, door_staff",
     );
     error.status = 400;
     throw error;
   }
+
+  assertActorCanManageRole({
+    actor: requester,
+    targetRole: normalizedRole,
+    operation: "créer",
+  });
 
   const existingUser = await User.findOne({ email });
   if (existingUser) {
@@ -83,15 +153,11 @@ const createStaff = async ({
   }
 
   const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
-
-  const roleDetails = {};
-  if (Array.isArray(permissions)) {
-    roleDetails.permissions = permissions;
-  }
-
-  if (normalizedRole === "ticket_office" && typeof isActive === "boolean") {
-    roleDetails.isActive = isActive;
-  }
+  const roleDetails = buildRoleDetails({
+    role: normalizedRole,
+    permissions,
+    isActive,
+  });
 
   const user = await User.create({
     email,
@@ -108,6 +174,49 @@ const createStaff = async ({
   return sanitizeUser(user);
 };
 
+const createBootstrapSuperAdmin = async ({
+  email,
+  password,
+  firstName,
+  lastName,
+  phone,
+}) => {
+  if (!email || !password) {
+    const error = new Error("Email and password are required");
+    error.status = 400;
+    throw error;
+  }
+
+  const existingSuperAdmin = await User.findOne({ role: "super_admin" });
+  if (existingSuperAdmin) {
+    const error = new Error("Un super administrateur existe déjà");
+    error.status = 409;
+    throw error;
+  }
+
+  const existingUser = await User.findOne({ email });
+  if (existingUser) {
+    const error = new Error("User already exists");
+    error.status = 409;
+    throw error;
+  }
+
+  const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
+  const user = await User.create({
+    email,
+    password: hashedPassword,
+    firstName,
+    lastName,
+    phone,
+    role: "super_admin",
+    roleDetails: {},
+    emailVerified: true,
+    status: "active",
+  });
+
+  return sanitizeUser(user);
+};
+
 const loginStaff = async ({ email, password }) => {
   if (!email || !password) {
     const error = new Error("Email and password are required");
@@ -115,7 +224,7 @@ const loginStaff = async ({ email, password }) => {
     throw error;
   }
 
-  const user = await User.findOne({ email, role: { $in: STAFF_ROLES } });
+  const user = await User.findOne({ email, role: { $in: STAFF_LOGIN_ROLES } });
   if (!user) {
     const error = new Error("Invalid email or password");
     error.status = 401;
@@ -163,7 +272,7 @@ const getStaffById = async (id) => {
   return sanitizeUser(user);
 };
 
-const updateStaff = async (id, updates) => {
+const updateStaff = async (id, updates, requester) => {
   if (!id) {
     const error = new Error("Missing user id");
     error.status = 401;
@@ -190,7 +299,21 @@ const updateStaff = async (id, updates) => {
   }
 
   const updateData = {};
-  const roleDetails = user.roleDetails ? user.roleDetails.toObject() : {};
+  const existingRoleDetails = user.roleDetails ? user.roleDetails.toObject() : {};
+  const requestedRole = Object.prototype.hasOwnProperty.call(updates || {}, "role")
+    ? normalizeRole(updates.role)
+    : user.role;
+
+  assertActorCanManageRole({
+    actor: requester,
+    targetRole: user.role,
+    operation: "modifier",
+  });
+  assertActorCanManageRole({
+    actor: requester,
+    targetRole: requestedRole,
+    operation: "attribuer",
+  });
 
   if (updates && Object.prototype.hasOwnProperty.call(updates, "email")) {
     if (!updates.email) {
@@ -223,31 +346,45 @@ const updateStaff = async (id, updates) => {
   }
 
   if (updates && Object.prototype.hasOwnProperty.call(updates, "role")) {
-    const normalizedRole = normalizeRole(updates.role);
-    if (!STAFF_ROLES.includes(normalizedRole)) {
+    if (!STAFF_ROLES.includes(requestedRole)) {
       const error = new Error(
-        "Role must be one of: admin, ticket_office, door_staff"
+        "Role must be one of: admin, super_admin, blog_manager, cashier, ticket_office, door_staff"
       );
       error.status = 400;
       throw error;
     }
-    updateData.role = normalizedRole;
+    updateData.role = requestedRole;
   }
 
-  if (updates && Object.prototype.hasOwnProperty.call(updates, "permissions")) {
-    if (Array.isArray(updates.permissions)) {
-      roleDetails.permissions = updates.permissions;
-    }
+  if (requestedRole === "admin" && requester?.role !== "super_admin") {
+    const error = new Error(
+      "Seul le super administrateur peut gerer les permissions admin",
+    );
+    error.status = 403;
+    throw error;
   }
 
-  if (updates && Object.prototype.hasOwnProperty.call(updates, "isActive")) {
-    if (typeof updates.isActive === "boolean") {
-      roleDetails.isActive = updates.isActive;
-    }
-  }
+  const nextRoleDetails = buildRoleDetails({
+    role: requestedRole,
+    permissions:
+      requestedRole === "admin"
+        ? updates?.permissions
+        : existingRoleDetails.permissions,
+    isActive:
+      Object.prototype.hasOwnProperty.call(updates || {}, "isActive")
+        ? updates.isActive
+        : existingRoleDetails.isActive,
+    baseRoleDetails: existingRoleDetails,
+  });
 
-  if (Object.keys(roleDetails).length > 0) {
-    updateData.roleDetails = roleDetails;
+  if (Object.keys(nextRoleDetails).length > 0) {
+    updateData.roleDetails = nextRoleDetails;
+  } else if (
+    existingRoleDetails &&
+    Object.keys(existingRoleDetails).length > 0 &&
+    requestedRole !== "admin"
+  ) {
+    updateData.roleDetails = nextRoleDetails;
   }
 
   if (Object.keys(updateData).length === 0) {
@@ -282,7 +419,7 @@ const updateStaff = async (id, updates) => {
   return sanitizeUser(updated);
 };
 
-const deleteStaff = async (id) => {
+const deleteStaff = async (id, requester) => {
   if (!id) {
     const error = new Error("Missing user id");
     error.status = 401;
@@ -307,12 +444,18 @@ const deleteStaff = async (id) => {
     error.status = 403;
     throw error;
   }
+
+  assertActorCanManageRole({
+    actor: requester,
+    targetRole: user.role,
+    operation: "supprimer",
+  });
 
   await User.deleteOne({ _id: id });
   return sanitizeUser(user);
 };
 
-const toggleStaffStatus = async (id) => {
+const toggleStaffStatus = async (id, requester) => {
   if (!id) {
     const error = new Error("Missing user id");
     error.status = 401;
@@ -337,6 +480,12 @@ const toggleStaffStatus = async (id) => {
     error.status = 403;
     throw error;
   }
+
+  assertActorCanManageRole({
+    actor: requester,
+    targetRole: user.role,
+    operation: "modifier",
+  });
 
   const nextStatus = user.status === "suspended" ? "active" : "suspended";
   user.status = nextStatus;
@@ -352,12 +501,44 @@ const listStaff = async () => {
   return staff.map((user) => sanitizeUser(user));
 };
 
+const bootstrapPromoteAdminsToSuperAdmin = async () => {
+  const admins = await User.find({ role: "admin" });
+
+  if (admins.length === 0) {
+    const error = new Error("Aucun staff avec role admin");
+    error.status = 404;
+    throw error;
+  }
+
+  const adminIds = admins.map((user) => user._id);
+  await User.updateMany(
+    { _id: { $in: adminIds } },
+    {
+      $set: {
+        role: "super_admin",
+        roleDetails: {},
+      },
+    },
+  );
+
+  const promotedUsers = await User.find({ _id: { $in: adminIds } }).sort({
+    createdAt: 1,
+  });
+
+  return {
+    promotedCount: promotedUsers.length,
+    users: promotedUsers.map((user) => sanitizeUser(user)),
+  };
+};
+
 module.exports = {
   createStaff,
+  createBootstrapSuperAdmin,
   loginStaff,
   getStaffById,
   updateStaff,
   deleteStaff,
   toggleStaffStatus,
   listStaff,
+  bootstrapPromoteAdminsToSuperAdmin,
 };

@@ -74,6 +74,16 @@ const getBucket = () => {
   return app.storage().bucket();
 };
 
+const getNamedBucket = (bucketName) => {
+  const safeBucketName = normalizeBucketName(bucketName);
+  if (!safeBucketName) {
+    return getBucket();
+  }
+
+  const app = getFirebaseApp();
+  return app.storage().bucket(safeBucketName);
+};
+
 const randomToken = () => {
   if (crypto.randomUUID) {
     return crypto.randomUUID();
@@ -125,6 +135,84 @@ const uploadImage = async (file, { folder = "uploads" } = {}) => {
   };
 };
 
+const parseFirebaseStorageUrl = (value) => {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) {
+    return null;
+  }
+
+  if (raw.startsWith("gs://")) {
+    const withoutPrefix = raw.slice(5);
+    const firstSlashIndex = withoutPrefix.indexOf("/");
+    if (firstSlashIndex <= 0) {
+      return null;
+    }
+
+    return {
+      bucket: normalizeBucketName(withoutPrefix.slice(0, firstSlashIndex)),
+      path: decodeURIComponent(withoutPrefix.slice(firstSlashIndex + 1)),
+    };
+  }
+
+  let parsed;
+
+  try {
+    parsed = new URL(raw);
+  } catch (_error) {
+    return null;
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+
+  if (hostname === "firebasestorage.googleapis.com") {
+    const match = parsed.pathname.match(/^\/v0\/b\/([^/]+)\/o\/(.+)$/);
+    if (!match) {
+      return null;
+    }
+
+    return {
+      bucket: normalizeBucketName(match[1]),
+      path: decodeURIComponent(match[2]),
+    };
+  }
+
+  if (hostname === "storage.googleapis.com") {
+    const match = parsed.pathname.match(/^\/([^/]+)\/(.+)$/);
+    if (!match) {
+      return null;
+    }
+
+    return {
+      bucket: normalizeBucketName(match[1]),
+      path: decodeURIComponent(match[2]),
+    };
+  }
+
+  return null;
+};
+
+const deleteImageByUrl = async (value) => {
+  const parsed = parseFirebaseStorageUrl(value);
+  if (!parsed?.bucket || !parsed?.path) {
+    return { deleted: false, skipped: true, reason: "non_firebase_url" };
+  }
+
+  const bucket = getNamedBucket(parsed.bucket);
+
+  try {
+    await bucket.file(parsed.path).delete({ ignoreNotFound: true });
+    return {
+      deleted: true,
+      bucket: parsed.bucket,
+      path: parsed.path,
+    };
+  } catch (error) {
+    error.status = error.status || 500;
+    throw error;
+  }
+};
+
 module.exports = {
+  deleteImageByUrl,
   uploadImage,
 };

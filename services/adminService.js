@@ -2,6 +2,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
 const User = require("../models/User");
+const { normalizePermissionList } = require("../config/dashboardPermissions");
 
 const SALT_ROUNDS = 12;
 
@@ -68,7 +69,8 @@ const createAdmin = async ({
     role: "admin",
     emailVerified: true,
     roleDetails: {
-      permissions: Array.isArray(permissions) ? permissions : [],
+      permissions: normalizePermissionList(permissions),
+      permissionsConfigured: true,
     },
     status: "active",
   });

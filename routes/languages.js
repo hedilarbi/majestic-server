@@ -7,16 +7,18 @@ const {
   updateLanguage,
   deleteLanguage,
 } = require("../controllers/languageController");
-const { requireAdmin } = require("../middlewares/auth");
+const { requireDashboardPermission } = require("../middlewares/auth");
 
 const router = express.Router();
 
-router.use(requireAdmin);
-
-router.post("/", createLanguage);
-router.get("/", listLanguages);
-router.get("/:id", getLanguage);
-router.put("/:id", updateLanguage);
-router.delete("/:id", deleteLanguage);
+router.get("/", requireDashboardPermission("versions", "list"), listLanguages);
+router.get("/:id", requireDashboardPermission("versions", "list"), getLanguage);
+router.post("/", requireDashboardPermission("versions", "create"), createLanguage);
+router.put("/:id", requireDashboardPermission("versions", "update"), updateLanguage);
+router.delete(
+  "/:id",
+  requireDashboardPermission("versions", "delete"),
+  deleteLanguage,
+);
 
 module.exports = router;

@@ -1,5 +1,55 @@
 const mongoose = require("mongoose");
 
+const MAX_NAME_SEGMENT_LENGTH = 54;
+
+const sanitizeCodeNamePart = (value) => {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9]/g, "")
+    .toUpperCase()
+    .trim();
+};
+
+const buildSubscriptionCustomerCodeLabel = (contact) => {
+  if (!contact || typeof contact !== "object") {
+    return "CLIENT";
+  }
+
+  const lastName = sanitizeCodeNamePart(contact.lastName);
+  const firstName = sanitizeCodeNamePart(contact.firstName);
+  const combined = `${lastName}${firstName}`.slice(0, MAX_NAME_SEGMENT_LENGTH);
+
+  return combined || "CLIENT";
+};
+
+const customerContactSchema = new mongoose.Schema(
+  {
+    firstName: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    lastName: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    email: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      default: "",
+      index: true,
+    },
+  },
+  { _id: false },
+);
+
 const subscriptionSaleSchema = new mongoose.Schema(
   {
     subscriptionCode: {
@@ -12,8 +62,12 @@ const subscriptionSaleSchema = new mongoose.Schema(
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
       index: true,
+      default: null,
+    },
+    customerContact: {
+      type: customerContactSchema,
+      default: undefined,
     },
     subscriptionId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -52,9 +106,14 @@ const subscriptionSaleSchema = new mongoose.Schema(
       default: "pending",
       index: true,
     },
+    paymentDetails: {
+      transactionId: String,
+      paidAt: Date,
+      gateway: String,
+    },
     status: {
       type: String,
-      enum: ["confirmed", "cancelled", "refunded"],
+      enum: ["pending", "confirmed", "cancelled", "refunded"],
       default: "confirmed",
       index: true,
     },
@@ -77,16 +136,15 @@ const subscriptionSaleSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-subscriptionSaleSchema.statics.generateSubscriptionCode = function () {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
+subscriptionSaleSchema.statics.generateSubscriptionCode = function (
+  customerContact,
+) {
+  const customerLabel = buildSubscriptionCustomerCodeLabel(customerContact);
   const random = Math.floor(Math.random() * 1000000)
     .toString()
     .padStart(6, "0");
 
-  return `SUB-${year}${month}${day}-${random}`;
+  return `AB-${customerLabel}-${random}`;
 };
 
 subscriptionSaleSchema.pre("validate", async function () {
@@ -99,7 +157,9 @@ subscriptionSaleSchema.pre("validate", async function () {
   const session = this.$session ? this.$session() : null;
 
   while (!isUnique && attempts < 10) {
-    this.subscriptionCode = this.constructor.generateSubscriptionCode();
+    this.subscriptionCode = this.constructor.generateSubscriptionCode(
+      this.customerContact,
+    );
     const query = this.constructor.findOne({
       subscriptionCode: this.subscriptionCode,
     });
@@ -119,5 +179,6 @@ subscriptionSaleSchema.pre("validate", async function () {
 });
 
 subscriptionSaleSchema.index({ createdAt: -1 });
+subscriptionSaleSchema.index({ "customerContact.email": 1, createdAt: -1 });
 
 module.exports = mongoose.model("SubscriptionSale", subscriptionSaleSchema);

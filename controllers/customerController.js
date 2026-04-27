@@ -3,7 +3,7 @@ const customerService = require("../services/customerService");
 const signupCustomer = async (req, res) => {
   try {
     if (!req.user || req.user.role !== "guest") {
-      return res.status(403).json({ message: "Acces guest requis" });
+      return res.status(403).json({ message: "Accès guest requis" });
     }
 
     const result = await customerService.createCustomer({

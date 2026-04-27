@@ -10,7 +10,7 @@ const {
   buildPricingOverrideMap,
   normalizeSeats,
   validateSeatsAgainstLayout,
-  buildSeatOrFilters,
+  buildSeatOrFilters
 } = require("../utils/seatHelpers");
 
 const HOLD_DURATION_MS = 60 * 1000;
@@ -27,13 +27,13 @@ const mergeUniqueSeats = (seats = []) => {
     const key = seatKey(seat.row, seat.col);
     const existing = byKey.get(key);
     const pricingOverrideId =
-      seat.pricingOverrideId ??
-      (existing ? existing.pricingOverrideId : null);
+    seat.pricingOverrideId ?? (
+    existing ? existing.pricingOverrideId : null);
 
     byKey.set(key, {
       row: String(seat.row),
       col: Number(seat.col),
-      pricingOverrideId,
+      pricingOverrideId
     });
   });
 
@@ -42,7 +42,7 @@ const mergeUniqueSeats = (seats = []) => {
 
 const applyActionOnSeats = ({ currentSeats, targetSeats, action }) => {
   const byKey = new Map(
-    currentSeats.map((seat) => [seatKey(seat.row, seat.col), seat]),
+    currentSeats.map((seat) => [seatKey(seat.row, seat.col), seat])
   );
 
   if (action === "release") {
@@ -66,14 +66,14 @@ const buildReservationPayload = (reservation) => {
   return {
     reservationId: String(reservation._id),
     expiresAt: reservation.expiresAt,
-    seats: reservation.seats || [],
+    seats: reservation.seats || []
   };
 };
 
 const resolveReservationSeatsWithOverrides = ({
   seats = [],
   sessionPricingOverrides,
-  roomPricingOverrides,
+  roomPricingOverrides
 }) => {
   if (!seats.length) {
     return [];
@@ -82,14 +82,14 @@ const resolveReservationSeatsWithOverrides = ({
   return seats.map((seat) => {
     const key = seatKey(seat.row, seat.col);
     const pricingOverrideId =
-      seat.pricingOverrideId ??
-      sessionPricingOverrides.get(key) ??
-      roomPricingOverrides.get(key) ??
-      null;
+    seat.pricingOverrideId ??
+    sessionPricingOverrides.get(key) ??
+    roomPricingOverrides.get(key) ??
+    null;
 
-    return pricingOverrideId
-      ? { ...seat, pricingOverrideId }
-      : { ...seat, pricingOverrideId: null };
+    return pricingOverrideId ?
+    { ...seat, pricingOverrideId } :
+    { ...seat, pricingOverrideId: null };
   });
 };
 
@@ -110,12 +110,12 @@ const getReservationForSession = async ({ sessionId, userId }) => {
     throw error;
   }
 
-  const session = await Session.findById(sessionId)
-    .select(
-      "roomId overrides pricingOverrides eventId date sessionTime version pricingLimits",
-    )
-    .populate("eventId")
-    .populate({ path: "pricingOverrides.pricingId", select: "name price" });
+  const session = await Session.findById(sessionId).
+  select(
+    "roomId overrides pricingOverrides eventId date sessionTime version pricingLimits"
+  ).
+  populate("eventId").
+  populate({ path: "pricingOverrides.pricingId", select: "name price" });
 
   if (!session) {
     const error = new Error("Session not found");
@@ -131,7 +131,7 @@ const getReservationForSession = async ({ sessionId, userId }) => {
   }
   await room.populate({
     path: "pricingOverrides.pricingId",
-    select: "name price",
+    select: "name price"
   });
 
   const now = new Date();
@@ -139,11 +139,11 @@ const getReservationForSession = async ({ sessionId, userId }) => {
     sessionId,
     userId,
     status: "pending",
-    expiresAt: { $gt: now },
+    expiresAt: { $gt: now }
   }).sort({ updatedAt: -1, createdAt: -1 });
   await SeatReservation.populate(reservations, {
     path: "seats.pricingOverrideId",
-    select: "name price",
+    select: "name price"
   });
 
   if (!reservations.length) {
@@ -151,39 +151,39 @@ const getReservationForSession = async ({ sessionId, userId }) => {
     sessionInfo.room = {
       _id: room._id,
       name: room.name,
-      pricingOverrides: Array.isArray(room.pricingOverrides)
-        ? room.pricingOverrides
-        : [],
+      pricingOverrides: Array.isArray(room.pricingOverrides) ?
+      room.pricingOverrides :
+      []
     };
     return {
       session: sessionInfo,
       event: session.eventId || null,
-      reservation: null,
+      reservation: null
     };
   }
 
   const mergedSeats = mergeUniqueSeats(
-    reservations.flatMap((reservation) => reservation.seats || []),
+    reservations.flatMap((reservation) => reservation.seats || [])
   );
   const primaryReservation = reservations[0];
 
   const sessionPricingOverrides = buildPricingOverrideMap(
-    session.pricingOverrides,
+    session.pricingOverrides
   );
   const roomPricingOverrides = buildPricingOverrideMap(room.pricingOverrides);
   const seatsWithOverrides = resolveReservationSeatsWithOverrides({
     seats: mergedSeats,
     sessionPricingOverrides,
-    roomPricingOverrides,
+    roomPricingOverrides
   });
 
   const sessionInfo = session.toObject({ versionKey: false });
   sessionInfo.room = {
     _id: room._id,
     name: room.name,
-    pricingOverrides: Array.isArray(room.pricingOverrides)
-      ? room.pricingOverrides
-      : [],
+    pricingOverrides: Array.isArray(room.pricingOverrides) ?
+    room.pricingOverrides :
+    []
   };
 
   return {
@@ -192,8 +192,8 @@ const getReservationForSession = async ({ sessionId, userId }) => {
     reservation: {
       reservationId: String(primaryReservation._id),
       expiresAt: primaryReservation.expiresAt,
-      seats: seatsWithOverrides,
-    },
+      seats: seatsWithOverrides
+    }
   };
 };
 
@@ -223,9 +223,9 @@ const createReservation = async ({ payload, userId, io }) => {
   }
 
   const normalizedSeats = normalizeSeats(seats);
-  const session = await Session.findById(sessionId)
-    .select("roomId overrides pricingOverrides")
-    .populate({ path: "pricingOverrides.pricingId", select: "name price" });
+  const session = await Session.findById(sessionId).
+  select("roomId overrides pricingOverrides").
+  populate({ path: "pricingOverrides.pricingId", select: "name price" });
   if (!session) {
     const error = new Error("Session not found");
     error.status = 404;
@@ -236,16 +236,16 @@ const createReservation = async ({ payload, userId, io }) => {
   if (room) {
     await room.populate({
       path: "pricingOverrides.pricingId",
-      select: "name price",
+      select: "name price"
     });
   }
   validateSeatsAgainstLayout({ seats: normalizedSeats, room, session });
 
   const sessionPricingOverrides = buildPricingOverrideMap(
-    session.pricingOverrides,
+    session.pricingOverrides
   );
   const roomPricingOverrides = buildPricingOverrideMap(
-    room?.pricingOverrides,
+    room?.pricingOverrides
   );
   const normalizedSeatsWithOverrides = normalizedSeats.map((seat) => {
     if (seat.pricingOverrideId) {
@@ -253,11 +253,11 @@ const createReservation = async ({ payload, userId, io }) => {
     }
     const key = seatKey(seat.row, seat.col);
     const override =
-      sessionPricingOverrides.get(key) || roomPricingOverrides.get(key) || null;
+    sessionPricingOverrides.get(key) || roomPricingOverrides.get(key) || null;
     const overrideId =
-      override && typeof override === "object" && override._id
-        ? override._id
-        : override;
+    override && typeof override === "object" && override._id ?
+    override._id :
+    override;
     return { ...seat, pricingOverrideId: overrideId || null };
   });
 
@@ -273,17 +273,17 @@ const createReservation = async ({ payload, userId, io }) => {
       await SeatLock.deleteMany({
         sessionId,
         expiresAt: { $lte: now },
-        $or: seatOrFilters,
+        $or: seatOrFilters
       }).session(dbSession);
 
       if (normalizedAction === "reserve") {
         const existingBookings = await Booking.find({
           sessionId,
           status: { $in: ["confirmed", "used"] },
-          seats: { $elemMatch: { $or: seatOrFilters } },
-        })
-          .select("_id")
-          .session(dbSession);
+          seats: { $elemMatch: { $or: seatOrFilters } }
+        }).
+        select("_id").
+        session(dbSession);
 
         if (existingBookings.length > 0) {
           const error = new Error("Some seats are already booked");
@@ -295,38 +295,38 @@ const createReservation = async ({ payload, userId, io }) => {
       const existingReservations = await SeatReservation.find({
         sessionId,
         userId,
-        status: "pending",
-      })
-        .sort({ createdAt: -1 })
-        .session(dbSession);
+        status: "pending"
+      }).
+      sort({ createdAt: -1 }).
+      session(dbSession);
 
-      const expiredReservationIds = existingReservations
-        .filter((item) => item.expiresAt && item.expiresAt <= now)
-        .map((item) => item._id);
+      const expiredReservationIds = existingReservations.
+      filter((item) => item.expiresAt && item.expiresAt <= now).
+      map((item) => item._id);
 
       if (expiredReservationIds.length > 0) {
         await SeatReservation.deleteMany({
-          _id: { $in: expiredReservationIds },
+          _id: { $in: expiredReservationIds }
         }).session(dbSession);
       }
 
       const activeReservations = existingReservations.filter(
-        (item) => !item.expiresAt || item.expiresAt > now,
+        (item) => !item.expiresAt || item.expiresAt > now
       );
 
       const primaryReservation = activeReservations[0] || null;
-      const duplicateReservationIds = activeReservations
-        .slice(1)
-        .map((item) => item._id);
+      const duplicateReservationIds = activeReservations.
+      slice(1).
+      map((item) => item._id);
 
       if (duplicateReservationIds.length > 0) {
         await SeatReservation.deleteMany({
-          _id: { $in: duplicateReservationIds },
+          _id: { $in: duplicateReservationIds }
         }).session(dbSession);
       }
 
       const currentSeats = mergeUniqueSeats(
-        activeReservations.flatMap((item) => item.seats || []),
+        activeReservations.flatMap((item) => item.seats || [])
       );
 
       if (normalizedAction === "reserve") {
@@ -334,10 +334,10 @@ const createReservation = async ({ payload, userId, io }) => {
           sessionId,
           expiresAt: { $gt: now },
           reservedBy: { $ne: userId },
-          $or: seatOrFilters,
-        })
-          .select("_id")
-          .session(dbSession);
+          $or: seatOrFilters
+        }).
+        select("_id").
+        session(dbSession);
 
         if (conflictingLocks.length > 0) {
           const error = new Error("Seat already reserved by another user");
@@ -349,12 +349,12 @@ const createReservation = async ({ payload, userId, io }) => {
       const nextSeats = applyActionOnSeats({
         currentSeats,
         targetSeats: normalizedSeatsWithOverrides,
-        action: normalizedAction,
+        action: normalizedAction
       });
 
       await SeatLock.deleteMany({
         sessionId,
-        reservedBy: userId,
+        reservedBy: userId
       }).session(dbSession);
 
       if (nextSeats.length > 0) {
@@ -363,19 +363,19 @@ const createReservation = async ({ payload, userId, io }) => {
           row: seat.row,
           col: seat.col,
           reservedBy: userId,
-          expiresAt,
+          expiresAt
         }));
 
         await SeatLock.insertMany(lockDocs, {
           ordered: true,
-          session: dbSession,
+          session: dbSession
         });
       }
 
       if (!nextSeats.length) {
         if (primaryReservation) {
           await SeatReservation.deleteOne({
-            _id: primaryReservation._id,
+            _id: primaryReservation._id
           }).session(dbSession);
         }
         reservation = null;
@@ -388,25 +388,25 @@ const createReservation = async ({ payload, userId, io }) => {
           {
             seats: nextSeats,
             expiresAt,
-            status: "pending",
+            status: "pending"
           },
           {
             new: true,
-            session: dbSession,
-          },
+            session: dbSession
+          }
         );
       } else {
         const created = await SeatReservation.create(
           [
-            {
-              sessionId,
-              userId,
-              seats: nextSeats,
-              status: "pending",
-              expiresAt,
-            },
-          ],
-          { session: dbSession },
+          {
+            sessionId,
+            userId,
+            seats: nextSeats,
+            status: "pending",
+            expiresAt
+          }],
+
+          { session: dbSession }
         );
         reservation = created[0];
       }
@@ -417,7 +417,7 @@ const createReservation = async ({ payload, userId, io }) => {
       code: error.code,
       status: error.status,
       sessionId,
-      userId,
+      userId
     });
     if (error && error.code === 11000) {
       const conflictError = new Error("Seat already reserved by another user");
@@ -433,19 +433,19 @@ const createReservation = async ({ payload, userId, io }) => {
     const payload = {
       seats: normalizedSeatsWithOverrides,
       userId: String(userId),
-      reservation: buildReservationPayload(reservation),
+      reservation: buildReservationPayload(reservation)
     };
 
     if (normalizedAction === "release") {
       io.to(`session-${sessionId}`).emit("seats-released", {
         ...payload,
-        reason: "manual",
+        reason: "manual"
       });
     } else {
       io.to(`session-${sessionId}`).emit("seats-reserved", {
         ...payload,
         expiresAt: reservation ? reservation.expiresAt : null,
-        reservationId: reservation ? reservation._id : null,
+        reservationId: reservation ? reservation._id : null
       });
     }
   }
@@ -456,7 +456,7 @@ const createReservation = async ({ payload, userId, io }) => {
 
   await reservation.populate({
     path: "seats.pricingOverrideId",
-    select: "name price",
+    select: "name price"
   });
 
   return reservation;
@@ -482,7 +482,7 @@ const cancelReservation = async ({ reservationId, userId, io }) => {
   try {
     await dbSession.withTransaction(async () => {
       const reservation =
-        await SeatReservation.findById(reservationId).session(dbSession);
+      await SeatReservation.findById(reservationId).session(dbSession);
       if (!reservation) {
         const error = new Error("Reservation not found");
         error.status = 404;
@@ -506,11 +506,11 @@ const cancelReservation = async ({ reservationId, userId, io }) => {
       await SeatLock.deleteMany({
         sessionId: reservation.sessionId,
         reservedBy: reservation.userId,
-        $or: buildSeatOrFilters(releasedSeats),
+        $or: buildSeatOrFilters(releasedSeats)
       }).session(dbSession);
 
       await SeatReservation.deleteOne({ _id: reservationId }).session(
-        dbSession,
+        dbSession
       );
     });
   } finally {
@@ -522,11 +522,11 @@ const cancelReservation = async ({ reservationId, userId, io }) => {
       seats: releasedSeats,
       userId: reservationOwner ? String(reservationOwner) : null,
       reason: "cancelled",
-      reservation: null,
+      reservation: null
     });
   }
 
-  return { message: "Reservation cancelled" };
+  return { message: "Réservation cancelled" };
 };
 
 const cancelReservationsForSession = async ({ sessionId, userId, io }) => {
@@ -549,34 +549,34 @@ const cancelReservationsForSession = async ({ sessionId, userId, io }) => {
   try {
     await dbSession.withTransaction(async () => {
       const [reservations, locks] = await Promise.all([
-        SeatReservation.find({
-          sessionId,
-          userId,
-          status: "pending",
-        })
-          .select("seats")
-          .session(dbSession),
-        SeatLock.find({ sessionId, reservedBy: userId })
-          .select("row col")
-          .session(dbSession),
-      ]);
+      SeatReservation.find({
+        sessionId,
+        userId,
+        status: "pending"
+      }).
+      select("seats").
+      session(dbSession),
+      SeatLock.find({ sessionId, reservedBy: userId }).
+      select("row col").
+      session(dbSession)]
+      );
 
       const reservationSeats = reservations.flatMap(
-        (reservation) => reservation.seats || [],
+        (reservation) => reservation.seats || []
       );
       const lockSeats = locks.map((lock) => ({ row: lock.row, col: lock.col }));
       releasedSeats = mergeUniqueSeats([...reservationSeats, ...lockSeats]);
 
       const lockResult = await SeatLock.deleteMany({
         sessionId,
-        reservedBy: userId,
+        reservedBy: userId
       }).session(dbSession);
       deletedLocksCount = lockResult.deletedCount || 0;
 
       const reservationResult = await SeatReservation.deleteMany({
         sessionId,
         userId,
-        status: "pending",
+        status: "pending"
       }).session(dbSession);
       deletedReservationsCount = reservationResult.deletedCount || 0;
     });
@@ -589,15 +589,15 @@ const cancelReservationsForSession = async ({ sessionId, userId, io }) => {
       seats: releasedSeats,
       userId: String(userId),
       reason: "cancelled",
-      reservation: null,
+      reservation: null
     });
   }
 
   return {
-    message: "Reservations cancelled",
+    message: "Réservations cancelled",
     reservationsCancelled: deletedReservationsCount,
     locksCancelled: deletedLocksCount,
-    releasedSeats,
+    releasedSeats
   };
 };
 
@@ -605,5 +605,5 @@ module.exports = {
   createReservation,
   cancelReservation,
   getReservationForSession,
-  cancelReservationsForSession,
+  cancelReservationsForSession
 };

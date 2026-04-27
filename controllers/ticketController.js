@@ -1,22 +1,23 @@
 const ticketService = require("../services/ticketService");
+const { hasDashboardPermission } = require("../config/dashboardPermissions");
 
 const listTickets = async (req, res) => {
   try {
-    if (!req.user || req.user.role !== "admin") {
-      return res.status(403).json({ message: "Acces admin requis" });
+    if (!hasDashboardPermission(req.user, "sales_tickets", "list")) {
+      return res.status(403).json({ message: "Permission insuffisante" });
     }
 
     const result = await ticketService.listTickets({
       page: req.query.page,
-      limit: req.query.limit,
+      limit: req.query.limit
     });
 
     return res.status(200).json(result);
   } catch (error) {
     const status = error.status || 500;
-    return res
-      .status(status)
-      .json({ message: error.message || "Server error" });
+    return res.
+    status(status).
+    json({ message: error.message || "Server error" });
   }
 };
 
@@ -25,7 +26,7 @@ const scanTicket = async (req, res) => {
     const result = await ticketService.scanTicket({
       userId: req.user && req.user.sub,
       userRole: req.user && req.user.role,
-      payload: req.body || {},
+      payload: req.body || {}
     });
 
     return res.status(200).json(result);
@@ -44,5 +45,5 @@ const scanTicket = async (req, res) => {
 
 module.exports = {
   listTickets,
-  scanTicket,
+  scanTicket
 };

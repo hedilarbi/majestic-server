@@ -2,7 +2,22 @@ const staffService = require("../services/staffService");
 
 const createStaff = async (req, res) => {
   try {
-    const user = await staffService.createStaff(req.body || {});
+    const user = await staffService.createStaff({
+      ...(req.body || {}),
+      requester: req.user || null,
+    });
+    return res.status(201).json({ user });
+  } catch (error) {
+    const status = error.status || 500;
+    return res
+      .status(status)
+      .json({ message: error.message || "Server error" });
+  }
+};
+
+const createBootstrapSuperAdmin = async (req, res) => {
+  try {
+    const user = await staffService.createBootstrapSuperAdmin(req.body || {});
     return res.status(201).json({ user });
   } catch (error) {
     const status = error.status || 500;
@@ -50,7 +65,11 @@ const getStaffById = async (req, res) => {
 
 const updateStaff = async (req, res) => {
   try {
-    const user = await staffService.updateStaff(req.params.id, req.body || {});
+    const user = await staffService.updateStaff(
+      req.params.id,
+      req.body || {},
+      req.user || null,
+    );
     return res.status(200).json({ user });
   } catch (error) {
     const status = error.status || 500;
@@ -62,7 +81,7 @@ const updateStaff = async (req, res) => {
 
 const deleteStaff = async (req, res) => {
   try {
-    const user = await staffService.deleteStaff(req.params.id);
+    const user = await staffService.deleteStaff(req.params.id, req.user || null);
     return res.status(200).json({ user });
   } catch (error) {
     const status = error.status || 500;
@@ -74,7 +93,10 @@ const deleteStaff = async (req, res) => {
 
 const toggleStaffStatus = async (req, res) => {
   try {
-    const user = await staffService.toggleStaffStatus(req.params.id);
+    const user = await staffService.toggleStaffStatus(
+      req.params.id,
+      req.user || null,
+    );
     return res.status(200).json({ user });
   } catch (error) {
     const status = error.status || 500;
@@ -96,8 +118,21 @@ const listStaff = async (req, res) => {
   }
 };
 
+const bootstrapPromoteAdminsToSuperAdmin = async (req, res) => {
+  try {
+    const result = await staffService.bootstrapPromoteAdminsToSuperAdmin();
+    return res.status(200).json(result);
+  } catch (error) {
+    const status = error.status || 500;
+    return res
+      .status(status)
+      .json({ message: error.message || "Server error" });
+  }
+};
+
 module.exports = {
   createStaff,
+  createBootstrapSuperAdmin,
   loginStaff,
   getStaffMe,
   getStaffById,
@@ -105,4 +140,5 @@ module.exports = {
   deleteStaff,
   toggleStaffStatus,
   listStaff,
+  bootstrapPromoteAdminsToSuperAdmin,
 };

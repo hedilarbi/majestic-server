@@ -7,15 +7,27 @@ const {
   updateShowType,
   deleteShowType,
 } = require("../controllers/showTypeController");
-const { requireAdmin } = require("../middlewares/auth");
+const { requireDashboardPermission } = require("../middlewares/auth");
 
 const router = express.Router();
 
-router.get("/", listShowTypes);
-router.get("/:id", getShowType);
+router.get("/", requireDashboardPermission("show_types", "list"), listShowTypes);
+router.get("/:id", requireDashboardPermission("show_types", "list"), getShowType);
 
-router.post("/", requireAdmin, createShowType);
-router.put("/:id", requireAdmin, updateShowType);
-router.delete("/:id", requireAdmin, deleteShowType);
+router.post(
+  "/",
+  requireDashboardPermission("show_types", "create"),
+  createShowType,
+);
+router.put(
+  "/:id",
+  requireDashboardPermission("show_types", "update"),
+  updateShowType,
+);
+router.delete(
+  "/:id",
+  requireDashboardPermission("show_types", "delete"),
+  deleteShowType,
+);
 
 module.exports = router;
