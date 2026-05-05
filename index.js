@@ -106,7 +106,7 @@ app.use("/payments", paymentRoutes);
 mongoose
   .connect(process.env.DB_CONNECTION)
   .then(() => {
-    startExpirationWatcher({ io });
+    startExpirationWatcher({ io, intervalMs: 1000 });
     startSessionStatusCron();
   })
   .catch((error) => {
