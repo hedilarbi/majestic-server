@@ -514,6 +514,7 @@ const serializeBooking = (booking) => ({
   status: booking.status,
   seats: Array.isArray(booking.seats) ? booking.seats : [],
   seatsCount: Array.isArray(booking.seats) ? booking.seats.length : 0,
+  printCount: Number.isFinite(booking.printCount) ? booking.printCount : 0,
   createdAt: booking.createdAt || null,
   bookedBy: serializeUser(booking.bookedBy),
   customer: serializeUser(booking.userId),
@@ -596,7 +597,7 @@ const listBookings = async ({ page, limit, bookedBy, dateFrom, dateTo }) => {
   skip(skip).
   limit(safeLimit).
   select(
-    "bookingNumber sessionId userId customerContact seats totalAmount paymentMethod paymentStatus promotion bookedBy bookingSource status subscriptionTransaction createdAt"
+    "bookingNumber sessionId userId customerContact seats totalAmount paymentMethod paymentStatus promotion bookedBy bookingSource status subscriptionTransaction printCount createdAt"
   ).
   populate({ path: "bookedBy", select: "firstName lastName email" }).
   populate({ path: "userId", select: "firstName lastName email" }).
