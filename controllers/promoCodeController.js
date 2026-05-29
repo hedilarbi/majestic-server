@@ -137,6 +137,17 @@ const validatePromoCodeForCheckout = async (req, res) => {
   }
 };
 
+const getPublicPromoCodes = async (req, res) => {
+  try {
+    const isAuthenticated = req.user?.role === "customer";
+    const codes = await promoCodeService.listPublicPromoCodes({ isAuthenticated });
+    return res.status(200).json({ promoCodes: codes });
+  } catch (error) {
+    const status = error.status || 500;
+    return res.status(status).json({ message: error.message || "Server error" });
+  }
+};
+
 module.exports = {
   createPromoCode,
   listPromoCodes,
@@ -146,4 +157,5 @@ module.exports = {
   deletePromoCode,
   setPromoCodeActive,
   validatePromoCodeForCheckout,
+  getPublicPromoCodes,
 };

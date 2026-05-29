@@ -2,6 +2,9 @@ const express = require("express");
 
 const {
   createBlogFormSubmission,
+  exportFormSubmissionsExcel,
+  exportFormSubmissionsPDF,
+  getFormStats,
   getSubmissionById,
   listSubmissionForms,
   listSubmissionsByForm,
@@ -31,7 +34,10 @@ const requireSubmissionReader = (req, res, next) =>
 
 router.post("/forms/:formId", authenticate, createBlogFormSubmission);
 router.get("/forms", requireSubmissionReader, listSubmissionForms);
+router.get("/forms/:formId/stats", requireSubmissionReader, getFormStats);
 router.get("/forms/:formId/submissions", requireSubmissionReader, listSubmissionsByForm);
+router.get("/forms/:formId/submissions/export/excel", requireSubmissionReader, exportFormSubmissionsExcel);
+router.get("/forms/:formId/submissions/export/pdf", requireSubmissionReader, exportFormSubmissionsPDF);
 router.get("/:submissionId", requireSubmissionReader, getSubmissionById);
 
 module.exports = router;

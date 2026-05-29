@@ -9,14 +9,17 @@ const {
   deletePromoCode,
   setPromoCodeActive,
   validatePromoCodeForCheckout,
+  getPublicPromoCodes,
 } = require("../controllers/promoCodeController");
 const {
   authenticate,
+  optionalAuthenticate,
   requireDashboardPermission,
 } = require("../middlewares/auth");
 
 const router = express.Router();
 
+router.get("/public", optionalAuthenticate, getPublicPromoCodes);
 router.get("/", requireDashboardPermission("promo_codes", "list"), listPromoCodes);
 router.get(
   "/generate",

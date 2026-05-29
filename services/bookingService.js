@@ -1031,7 +1031,7 @@ const createBooking = async ({ payload, userId, userRole, io }) => {
   const {
     sessionId,
     reservationId,
-    pricingSelections,
+    pricingSelections: rawPricingSelections,
     customerId,
     customerContact,
     customer,
@@ -1039,6 +1039,7 @@ const createBooking = async ({ payload, userId, userRole, io }) => {
     subscriptionCode,
     promoCode
   } = payload || {};
+  let pricingSelections = rawPricingSelections;
   const isTicketOfficeFlow =
   userRole === "ticket_office" ||
   userRole === "admin" ||
@@ -1257,6 +1258,91 @@ const createBooking = async ({ payload, userId, userRole, io }) => {
         };
       });
 
+      // ── Subscription pre-validation & auto-selections ──────────────────────
+      // When paying with a subscription code, build selections server-side
+      // instead of trusting the client-sent pricingSelections.
+      let subscriptionSalePreload = null;
+      if (requestedSubscriptionCode) {
+        const preloadQuery = {
+          subscriptionCode: requestedSubscriptionCode,
+          status: "confirmed",
+          paymentStatus: "completed"
+        };
+        if (isCustomerFlow) {
+          const preloadBookingCustomerId = isCustomerFlow ? userId : null;
+          if (preloadBookingCustomerId) {
+            preloadQuery.userId = preloadBookingCustomerId;
+          }
+        }
+        subscriptionSalePreload = await SubscriptionSale.findOne(preloadQuery)
+          .populate({
+            path: "subscriptionId",
+            select: "isActive expirationDate allowedSeatType maxSeatsPerSession"
+          })
+          .session(dbSession);
+
+        if (!subscriptionSalePreload) {
+          const error = new Error("Code abonnement invalide.");
+          error.status = 404;
+          throw error;
+        }
+
+        const subDef = subscriptionSalePreload.subscriptionId &&
+          typeof subscriptionSalePreload.subscriptionId === "object"
+          ? subscriptionSalePreload.subscriptionId
+          : null;
+
+        const allowedSeatType = subDef?.allowedSeatType ||
+          subscriptionSalePreload.allowedSeatType ||
+          "normale";
+        const maxSeatsPerSession = Number.isFinite(
+          Number(subDef?.maxSeatsPerSession ?? subscriptionSalePreload.maxSeatsPerSession)
+        )
+          ? Number(subDef?.maxSeatsPerSession ?? subscriptionSalePreload.maxSeatsPerSession)
+          : 1;
+
+        // 1. Validate seat count limit
+        if (mergedSeats.length > maxSeatsPerSession) {
+          const error = new Error(
+            `Cet abonnement est limité à ${maxSeatsPerSession} siège${maxSeatsPerSession > 1 ? "s" : ""} par séance.`
+          );
+          error.status = 409;
+          throw error;
+        }
+
+        // 2. Validate seat type compatibility
+        // VIP (tarif_fixe) sub: can book ALL seat types
+        // Normal sub: cannot book fixed/VIP seats
+        if (allowedSeatType === "normale" && fixedSeats.length > 0) {
+          const error = new Error(
+            "Cet abonnement ne permet pas de réserver des sièges VIP ou à tarif fixe."
+          );
+          error.status = 409;
+          throw error;
+        }
+
+        // 3. Auto-build pricingSelections for variable seats
+        // Fixed seats always carry their own pricing via fixedTicketItems (no selection needed).
+        // For variable seats we must provide a valid tarif from pricingLimits.
+        if (variableSeats.length > 0) {
+          const firstPricing = Array.from(pricingLimits.byKey.values())[0];
+          if (!firstPricing) {
+            const error = new Error("Aucun tarif disponible pour cette séance.");
+            error.status = 400;
+            throw error;
+          }
+          pricingSelections = [{
+            pricingId: firstPricing.id || undefined,
+            name: firstPricing.name,
+            price: firstPricing.price,
+            quantity: variableSeats.length
+          }];
+        } else {
+          // All seats are fixed-price: no variable selections needed
+          pricingSelections = [];
+        }
+      }
+
       const normalizedSelections = normalizePricingSelections({
         selections: pricingSelections,
         pricingLimits
@@ -1422,12 +1508,13 @@ const createBooking = async ({ payload, userId, userRole, io }) => {
           subscriptionSaleQuery.userId = bookingCustomerId;
         }
 
-        const subscriptionSale = await SubscriptionSale.findOne(subscriptionSaleQuery).
-        populate({
-          path: "subscriptionId",
-          select: "isActive expirationDate"
-        }).
-        session(dbSession);
+        const subscriptionSale = subscriptionSalePreload ||
+          await SubscriptionSale.findOne(subscriptionSaleQuery)
+            .populate({
+              path: "subscriptionId",
+              select: "isActive expirationDate allowedSeatType maxSeatsPerSession"
+            })
+            .session(dbSession);
 
         if (!subscriptionSale) {
           const error = new Error("Code abonnement invalide.");
@@ -1495,6 +1582,26 @@ const createBooking = async ({ payload, userId, userRole, io }) => {
           error.status = 409;
           throw error;
         }
+
+        // Check: subscription already used for this specific session
+        const existingBookingForSession = await Booking.findOne({
+          sessionId,
+          "subscriptionTransaction.subscriptionSaleId": subscriptionSale._id,
+          status: { $in: ["confirmed", "used"] }
+        })
+          .select("_id")
+          .session(dbSession);
+
+        if (existingBookingForSession) {
+          const error = new Error(
+            "Cet abonnement a déjà été utilisé pour cette séance."
+          );
+          error.status = 409;
+          throw error;
+        }
+
+        // maxSeatsPerSession and seatType already validated in the pre-check above.
+        // Skip duplicate validation here to avoid double-counting.
 
         if (!hasPersistedRemaining) {
           await SubscriptionSale.updateOne(
@@ -1689,10 +1796,51 @@ const createBooking = async ({ payload, userId, userRole, io }) => {
   };
 };
 
+const incrementPrintCount = async (bookingId) => {
+  if (!mongoose.isValidObjectId(bookingId)) {
+    throw new Error("Invalid booking id");
+  }
+
+  const booking = await Booking.findByIdAndUpdate(
+    bookingId,
+    { $inc: { printCount: 1 } },
+    { new: true }
+  );
+
+  if (!booking) {
+    throw new Error("Booking not found");
+  }
+
+  await auditLogService.log({
+    action: "BOOKING_PRINTED",
+    targetType: "booking",
+    targetId: bookingId,
+    metadata: { printCount: booking.printCount }
+  });
+
+  return { ok: true, printCount: booking.printCount };
+};
+
+const logPrintCancelled = async (bookingId) => {
+  if (!mongoose.isValidObjectId(bookingId)) {
+    throw new Error("Invalid booking id");
+  }
+
+  await auditLogService.log({
+    action: "BOOKING_PRINT_CANCELLED",
+    targetType: "booking",
+    targetId: bookingId
+  });
+
+  return { ok: true };
+};
+
 module.exports = {
   cancelBookingTickets,
   createBooking,
   getBookingById,
   listBookings,
-  listBookingsForUser
+  listBookingsForUser,
+  incrementPrintCount,
+  logPrintCancelled
 };

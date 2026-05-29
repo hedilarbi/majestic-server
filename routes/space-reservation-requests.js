@@ -6,6 +6,7 @@ const {
   getSpaceReservationRequest,
   listSpaceReservationRequests,
   markSpaceReservationRequestProcessed,
+  replyToSpaceReservationRequest,
 } = require("../controllers/spaceReservationRequestController");
 const { requireDashboardPermission } = require("../middlewares/auth");
 
@@ -26,6 +27,11 @@ router.patch(
   "/:id/processed",
   requireDashboardPermission("reservation_requests", "update"),
   markSpaceReservationRequestProcessed,
+);
+router.post(
+  "/:id/reply",
+  requireDashboardPermission("reservation_requests", "update"),
+  replyToSpaceReservationRequest,
 );
 router.delete(
   "/:id",

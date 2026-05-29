@@ -65,6 +65,10 @@ const BlogContentSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    images: {
+      type: [String],
+      default: [],
+    },
     contentHtml: {
       type: String,
       default: "",
@@ -87,6 +91,16 @@ const BlogContentSchema = new mongoose.Schema(
     questions: {
       type: [BlogQuestionSchema],
       default: [],
+    },
+    seoTitle: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    seoDescription: {
+      type: String,
+      trim: true,
+      default: "",
     },
     isPublished: {
       type: Boolean,

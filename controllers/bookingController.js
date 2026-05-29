@@ -142,10 +142,30 @@ const createBooking = async (req, res) => {
   }
 };
 
+const trackPrint = async (req, res) => {
+  try {
+    const result = await bookingService.incrementPrintCount(req.params.bookingId);
+    return res.status(200).json(result);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+const trackPrintCancelled = async (req, res) => {
+  try {
+    const result = await bookingService.logPrintCancelled(req.params.bookingId);
+    return res.status(200).json(result);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   cancelBookingTickets,
   listBookings,
   listMyBookings,
   getBookingById,
   createBooking,
+  trackPrint,
+  trackPrintCancelled,
 };

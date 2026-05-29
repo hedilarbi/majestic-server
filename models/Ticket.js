@@ -75,6 +75,19 @@ const ticketSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    currentPresence: {
+      type: String,
+      enum: ["in", "out"],
+      default: "out",
+      index: true,
+    },
+    scanHistory: [
+      {
+        type: { type: String, enum: ["entry", "exit"] },
+        scannedAt: { type: Date, default: Date.now },
+        scannedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      },
+    ],
   },
   { timestamps: true },
 );

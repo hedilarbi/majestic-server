@@ -47,7 +47,7 @@ const auditLogSchema = new mongoose.Schema(
     actionType: {
       type: String,
       required: true,
-      enum: ["ticket_cancellation", "ticket_print"],
+      enum: ["ticket_cancellation", "ticket_print", "ticket_print_cancelled"],
       index: true,
     },
     actorId: {

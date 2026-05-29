@@ -204,8 +204,19 @@ const buildPayload = async ({ payload = {}, files = {}, actorId, existing = null
     data.excerpt = excerpt;
   }
 
+  // SEO metadata — applies to all content types
+  const seoTitle = normalizeString(payload.seoTitle);
+  const seoDescription = normalizeString(payload.seoDescription);
+  if (seoTitle !== undefined) {
+    data.seoTitle = seoTitle || "";
+  }
+  if (seoDescription !== undefined) {
+    data.seoDescription = seoDescription || "";
+  }
+
   const fileImage = files?.image?.[0];
   const fileThumbnail = files?.thumbnail?.[0];
+  const fileImages = files?.images || [];
 
   if (type === "article") {
     if (Object.prototype.hasOwnProperty.call(payload, "contentHtml")) {
@@ -231,6 +242,18 @@ const buildPayload = async ({ payload = {}, files = {}, actorId, existing = null
       const error = new Error("L'image de l'article est obligatoire.");
       error.status = 400;
       throw error;
+    }
+
+    if (fileImages.length > 0) {
+      const uploadedUrls = await Promise.all(
+        fileImages.map((file) => uploadImage(file, { folder: "blog/articles/album" }).then((u) => u.url)),
+      );
+      const existingImages = Object.prototype.hasOwnProperty.call(payload, "images")
+        ? parseArray(payload.images)
+        : existing?.images || [];
+      data.images = [...existingImages, ...uploadedUrls];
+    } else if (Object.prototype.hasOwnProperty.call(payload, "images")) {
+      data.images = parseArray(payload.images);
     }
   }
 
@@ -281,9 +304,21 @@ const buildPayload = async ({ payload = {}, files = {}, actorId, existing = null
     data.questions = questions;
   }
 
-  if (type !== "article") {
+  if (type === "trailer") {
     data.image = "";
+    data.images = [];
     data.contentHtml = "";
+  }
+
+  if (type === "form") {
+    data.images = [];
+    data.contentHtml = "";
+    if (fileImage) {
+      const upload = await uploadImage(fileImage, { folder: "blog/forms" });
+      data.image = upload.url;
+    } else if (Object.prototype.hasOwnProperty.call(payload, "image")) {
+      data.image = normalizeString(payload.image) || "";
+    }
   }
 
   if (type !== "trailer") {
@@ -316,6 +351,13 @@ const collectStaleAssetUrls = (existing, nextData) => {
   pairs.forEach(([previousUrl, nextUrl]) => {
     if (previousUrl && previousUrl !== nextUrl) {
       staleUrls.push(previousUrl);
+    }
+  });
+
+  const nextImages = new Set(nextData?.images || []);
+  (existing?.images || []).forEach((url) => {
+    if (url && !nextImages.has(url)) {
+      staleUrls.push(url);
     }
   });
 
@@ -449,7 +491,7 @@ const deleteBlogContent = async (id) => {
     throw error;
   }
 
-  await deleteAssetUrls([item.image, item.thumbnail]);
+  await deleteAssetUrls([item.image, item.thumbnail, ...(item.images || [])]);
   await item.deleteOne();
 
   return item;

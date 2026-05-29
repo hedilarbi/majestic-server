@@ -171,7 +171,7 @@ const resolveSessionSnapshot = async (sessionId) => {
 
 const normalizeActionType = (value) => {
   const normalized = normalizeText(value).toLowerCase();
-  return ["ticket_cancellation", "ticket_print"].includes(normalized)
+  return ["ticket_cancellation", "ticket_print", "ticket_print_cancelled"].includes(normalized)
     ? normalized
     : "";
 };
@@ -324,6 +324,11 @@ const recordTicketPrint = async ({ bookingId, actorId, actorRole }) => {
     throw error;
   }
 
+  await Booking.updateOne(
+    { _id: booking._id },
+    { $inc: { printCount: 1 } },
+  );
+
   return createAuditLog({
     actionType: "ticket_print",
     actorId,
@@ -334,6 +339,45 @@ const recordTicketPrint = async ({ bookingId, actorId, actorRole }) => {
     tickets,
     details: {
       printedTicketsCount: tickets.length,
+      printCount: (booking.printCount || 0) + 1,
+    },
+  });
+};
+
+const recordTicketPrintCancelled = async ({ bookingId, actorId, actorRole }) => {
+  if (!bookingId || !mongoose.isValidObjectId(bookingId)) {
+    const error = new Error("Booking invalide.");
+    error.status = 400;
+    throw error;
+  }
+
+  const normalizedRole = normalizeText(actorRole);
+  if (!["ticket_office", "admin", "super_admin"].includes(normalizedRole)) {
+    const error = new Error("Accès refusé.");
+    error.status = 403;
+    throw error;
+  }
+
+  const booking = await Booking.findById(bookingId)
+    .select("bookingNumber sessionId printCount")
+    .lean();
+
+  if (!booking) {
+    const error = new Error("Booking introuvable.");
+    error.status = 404;
+    throw error;
+  }
+
+  return createAuditLog({
+    actionType: "ticket_print_cancelled",
+    actorId,
+    actorRole: normalizedRole,
+    bookingId: booking._id,
+    bookingNumber: booking.bookingNumber || "",
+    sessionId: booking.sessionId,
+    tickets: [],
+    details: {
+      printCount: booking.printCount || 0,
     },
   });
 };
@@ -377,4 +421,5 @@ module.exports = {
   listAuditLogs,
   recordTicketCancellation,
   recordTicketPrint,
+  recordTicketPrintCancelled,
 };

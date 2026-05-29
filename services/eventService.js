@@ -311,11 +311,21 @@ const getHomeContent = async () => {
       .sort({ order: 1, createdAt: -1 }),
   ]);
 
+  let lastExpiredShow = null;
+  if (!shows.length) {
+    lastExpiredShow = await Event.findOne({
+      status: "active",
+      type: "show",
+      availableTo: { $lt: now },
+    }).sort({ availableTo: -1 });
+  }
+
   return {
     aLaffiche: movies,
     spectacles: shows,
     prochainement: upcoming,
     homeSlider,
+    lastExpiredShow: lastExpiredShow || null,
   };
 };
 
@@ -373,12 +383,18 @@ const getEventsWithALAffiche = async ({ type, genre }) => {
       })
     : Promise.resolve([]);
 
-  const [events, prochainement] = await Promise.all([
+  const expiredShowsPromise =
+    normalizedType === "show"
+      ? Event.find({ status: "active", type: "show", availableTo: { $lt: now } }).sort({ availableTo: -1 }).limit(6)
+      : Promise.resolve([]);
+
+  const [events, prochainement, expiredShows] = await Promise.all([
     eventsPromise,
     Event.find(upcomingFilters).sort({ availableFrom: 1 }),
+    expiredShowsPromise,
   ]);
 
-  return { events, prochainement, aLaffiche, showTypes };
+  return { events, prochainement, aLaffiche, showTypes, expiredShows };
 };
 
 module.exports = {

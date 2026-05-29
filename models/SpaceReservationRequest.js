@@ -24,6 +24,11 @@ const spaceReservationRequestSchema = new mongoose.Schema(
       lowercase: true,
       index: true,
     },
+    organisationName: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     establishmentType: {
       type: String,
       enum: ["association", "organisation"],

@@ -26,6 +26,7 @@ router.post(
   upload.fields([
     { name: "image", maxCount: 1 },
     { name: "thumbnail", maxCount: 1 },
+    { name: "images", maxCount: 10 },
   ]),
   createBlogContent,
 );
@@ -35,6 +36,7 @@ router.put(
   upload.fields([
     { name: "image", maxCount: 1 },
     { name: "thumbnail", maxCount: 1 },
+    { name: "images", maxCount: 10 },
   ]),
   updateBlogContent,
 );

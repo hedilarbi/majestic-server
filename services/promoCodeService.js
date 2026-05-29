@@ -370,6 +370,25 @@ const listPromoCodes = async () => {
   return PromoCode.find().sort({ createdAt: -1 });
 };
 
+const listPublicPromoCodes = async ({ isAuthenticated = false } = {}) => {
+  const now = new Date();
+  const filter = {
+    isActive: true,
+    $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }],
+  };
+
+  if (!isAuthenticated) {
+    filter.availability = "public";
+  }
+
+  const codes = await PromoCode.find(filter)
+    .select("code reductionType reductionValue expiresAt availability")
+    .sort({ createdAt: -1 })
+    .lean();
+
+  return codes;
+};
+
 const getPromoCodeById = async (id) => {
   if (!mongoose.isValidObjectId(id)) {
     const error = new Error("Invalid promo code id");
@@ -446,6 +465,7 @@ const deletePromoCode = async (id) => {
 module.exports = {
   createPromoCode,
   listPromoCodes,
+  listPublicPromoCodes,
   getPromoCodeById,
   updatePromoCode,
   deletePromoCode,

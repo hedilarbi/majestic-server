@@ -132,6 +132,16 @@ const subscriptionSaleSchema = new mongoose.Schema(
     lastUsedAt: {
       type: Date,
     },
+    allowedSeatType: {
+      type: String,
+      enum: ["normale", "tarif_fixe"],
+      default: "normale",
+    },
+    maxSeatsPerSession: {
+      type: Number,
+      default: 1,
+      min: 1,
+    },
   },
   { timestamps: true },
 );

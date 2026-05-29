@@ -260,8 +260,60 @@ const getSubmissionById = async (submissionId) => {
   return submission;
 };
 
+const getFormStats = async (formId) => {
+  assertObjectId(formId, "Formulaire");
+
+  const form = await BlogContent.findById(formId)
+    .select("type title questions")
+    .lean();
+
+  if (!form || form.type !== "form") {
+    const error = new Error("Formulaire introuvable.");
+    error.status = 404;
+    throw error;
+  }
+
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+  const [totalCount, dailyCounts, answersAgg] = await Promise.all([
+    BlogFormSubmission.countDocuments({ formId }),
+    BlogFormSubmission.aggregate([
+      { $match: { formId: new (require("mongoose").Types.ObjectId)(formId), createdAt: { $gte: thirtyDaysAgo } } },
+      { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } }, count: { $sum: 1 } } },
+      { $sort: { _id: 1 } },
+    ]),
+    BlogFormSubmission.aggregate([
+      { $match: { formId: new (require("mongoose").Types.ObjectId)(formId) } },
+      { $unwind: "$answers" },
+      { $group: { _id: { questionId: "$answers.questionId", value: "$answers.value", values: "$answers.values" }, count: { $sum: 1 } } },
+    ]),
+  ]);
+
+  const OPTION_TYPES = new Set(["radio", "checkbox", "select"]);
+  const questionStats = (form.questions || [])
+    .filter((q) => OPTION_TYPES.has(q.type))
+    .map((q) => {
+      const qIdStr = String(q._id);
+      const entries = answersAgg.filter((a) => String(a._id.questionId) === qIdStr);
+      const distribution = {};
+      entries.forEach((entry) => {
+        const vals = Array.isArray(entry._id.values) && entry._id.values.length > 0
+          ? entry._id.values
+          : entry._id.value ? [entry._id.value] : [];
+        vals.forEach((v) => {
+          if (v) distribution[v] = (distribution[v] || 0) + entry.count;
+        });
+      });
+      return { questionId: qIdStr, label: q.label, type: q.type, distribution };
+    });
+
+  return { totalCount, dailyCounts, questionStats };
+};
+
 module.exports = {
   createBlogFormSubmission,
+  getFormStats,
   getSubmissionById,
   getSubmissionFormById,
   listSubmissionForms,

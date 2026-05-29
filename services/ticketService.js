@@ -283,14 +283,29 @@ const scanTicket = async ({ userId, userRole, payload }) => {
     throw error;
   }
 
-  if (ticketStatus === "scanned") {
-    const error = new Error("Ticket déjà utilisé.");
-    error.status = 409;
-    error.code = "ALREADY_SCANNED";
-    error.details = {
-      ticket: serializeScanTicket(ticket)
-    };
-    throw error;
+  const scanType = (payload?.type || payload?.scanType || "entry").trim().toLowerCase();
+  const isExit = scanType === "exit";
+
+  // Check current presence for logic
+  const currentPresence = ticket.currentPresence || (ticketStatus === "scanned" ? "in" : "out");
+
+  if (isExit) {
+    if (currentPresence === "out") {
+      const error = new Error("Le client est déjà sorti ou n'est pas encore entré.");
+      error.status = 409;
+      error.code = "ALREADY_OUT";
+      error.details = { ticket: serializeScanTicket(ticket) };
+      throw error;
+    }
+  } else {
+    // Entry logic
+    if (currentPresence === "in") {
+      const error = new Error("Le client est déjà à l'intérieur.");
+      error.status = 409;
+      error.code = "ALREADY_IN";
+      error.details = { ticket: serializeScanTicket(ticket) };
+      throw error;
+    }
   }
 
   const booking =
@@ -312,22 +327,36 @@ const scanTicket = async ({ userId, userRole, payload }) => {
   }
 
   const now = new Date();
+  const updateData = {
+    $set: {
+      currentPresence: isExit ? "out" : "in",
+    },
+    $push: {
+      scanHistory: {
+        type: isExit ? "exit" : "entry",
+        scannedAt: now,
+        scannedBy: userId
+      }
+    }
+  };
+
+  // If first entry
+  if (!isExit && !ticket.isScanned) {
+    updateData.$set.isScanned = true;
+    updateData.$set.status = "scanned";
+    updateData.$set.scannedAt = now;
+    updateData.$set.scannedBy = userId;
+  }
+
   const scannedTicket = await Ticket.findOneAndUpdate(
-    { _id: ticket._id, isScanned: false, status: { $ne: "cancelled" } },
-    { $set: { isScanned: true, status: "scanned", scannedAt: now, scannedBy: userId } },
+    { _id: ticket._id, status: { $ne: "cancelled" } },
+    updateData,
     { new: true }
   ).lean();
 
   if (!scannedTicket) {
-    const alreadyScannedTicket = await Ticket.findById(ticket._id).
-    select("code status seat pricingName price isScanned scannedAt cancelledAt").
-    lean();
-    const error = new Error("Ticket déjà utilisé.");
-    error.status = 409;
-    error.code = "ALREADY_SCANNED";
-    error.details = {
-      ticket: serializeScanTicket(alreadyScannedTicket || ticket)
-    };
+    const error = new Error("Une erreur est survenue lors du scan.");
+    error.status = 500;
     throw error;
   }
 
@@ -339,7 +368,7 @@ const scanTicket = async ({ userId, userRole, payload }) => {
     isScanned: false
   });
 
-  if (remainingTickets === 0) {
+  if (!isExit && remainingTickets === 0) {
     const bookingIdValue =
     ticket.bookingId && ticket.bookingId._id ? ticket.bookingId._id : ticket.bookingId;
     if (bookingIdValue) {
@@ -350,21 +379,266 @@ const scanTicket = async ({ userId, userRole, payload }) => {
     }
   }
 
+  // Get current presence count for the session
+  const presenceCount = await Ticket.countDocuments({
+    sessionId: expectedSessionId,
+    currentPresence: "in"
+  });
+
   return {
     status: "accepted",
-    message: "Ticket valide. Accès autorisé.",
-    ticket: serializeScanTicket(scannedTicket),
+    message: isExit ? "Sortie validée." : "Entrée validée.",
+    ticket: {
+      ...serializeScanTicket(scannedTicket),
+      currentPresence: scannedTicket.currentPresence
+    },
     booking: {
       bookingNumber: booking.bookingNumber || "",
       status: remainingTickets === 0 ? "used" : booking.status || "confirmed",
       paymentStatus: booking.paymentStatus || ""
     },
-    session: serializeSessionDetails(expectedSession),
+    session: {
+      ...serializeSessionDetails(expectedSession),
+      presenceCount
+    },
     remainingTicketsInBooking: remainingTickets
+  };
+};
+
+const TarifCorrection = require("../models/TarifCorrection");
+
+// ─────────────────────────────────────────────────────────────
+// Recherche d'un billet par code (TK-...) ou numéro de booking
+// ─────────────────────────────────────────────────────────────
+const searchTicket = async ({ q }) => {
+  const raw = typeof q === "string" ? q.trim().toUpperCase() : "";
+
+  if (!raw) {
+    const error = new Error("Code ou numéro de réservation requis.");
+    error.status = 400;
+    throw error;
+  }
+
+  let ticket = null;
+
+  if (raw.startsWith("TK-")) {
+    ticket = await Ticket.findOne({ code: raw })
+      .populate({ path: "bookingId", select: "bookingNumber totalAmount paymentMethod status paymentStatus" })
+      .populate({
+        path: "sessionId",
+        select: "date sessionTime pricingLimits eventId roomId",
+        populate: { path: "eventId", select: "name poster" },
+      })
+      .populate({ path: "userId", select: "firstName lastName email" })
+      .lean();
+  } else if (raw.startsWith("BK-")) {
+    const booking = await Booking.findOne({ bookingNumber: raw })
+      .select("_id bookingNumber totalAmount paymentMethod status paymentStatus")
+      .lean();
+
+    if (booking) {
+      const tickets = await Ticket.find({ bookingId: booking._id, status: { $ne: "cancelled" } })
+        .populate({
+          path: "sessionId",
+          select: "date sessionTime pricingLimits eventId roomId",
+          populate: { path: "eventId", select: "name poster" },
+        })
+        .populate({ path: "userId", select: "firstName lastName email" })
+        .lean();
+
+      // Return first active ticket if multiple; the UI can list them
+      if (tickets.length > 0) {
+        tickets[0].bookingId = booking;
+        ticket = tickets[0];
+        ticket._allTickets = tickets.map((t) => ({
+          id: String(t._id),
+          code: t.code,
+          seat: t.seat,
+          pricingName: t.pricingName,
+          price: t.price,
+          status: resolveTicketStatus(t),
+        }));
+      }
+    }
+  }
+
+  if (!ticket) {
+    const error = new Error("Aucun billet trouvé pour ce code.");
+    error.status = 404;
+    throw error;
+  }
+
+  const booking = ticket.bookingId && typeof ticket.bookingId === "object" ? ticket.bookingId : null;
+  const session = ticket.sessionId && typeof ticket.sessionId === "object" ? ticket.sessionId : null;
+  const event = session?.eventId && typeof session.eventId === "object" ? session.eventId : null;
+
+  const availablePricings = Array.isArray(session?.pricingLimits)
+    ? session.pricingLimits
+        .filter((p) => Number(p.price) > 0)
+        .map((p) => ({ name: p.name, price: Number(p.price) }))
+    : [];
+
+  return {
+    id: String(ticket._id),
+    code: ticket.code,
+    status: resolveTicketStatus(ticket),
+    seat: ticket.seat,
+    pricingName: ticket.pricingName,
+    price: ticket.price,
+    allTickets: ticket._allTickets || null,
+    booking: booking
+      ? {
+          id: String(booking._id),
+          bookingNumber: booking.bookingNumber,
+          totalAmount: booking.totalAmount,
+          paymentMethod: booking.paymentMethod,
+          status: booking.status,
+          paymentStatus: booking.paymentStatus,
+        }
+      : null,
+    session: session
+      ? {
+          id: String(session._id),
+          date: session.date,
+          sessionTime: session.sessionTime,
+          eventName: event?.name || "",
+          availablePricings,
+        }
+      : null,
+    user: serializeUser(ticket.userId),
+  };
+};
+
+// ─────────────────────────────────────────────────────────────
+// Modification de tarif + enregistrement caisse
+// ─────────────────────────────────────────────────────────────
+const repriceTicket = async ({ ticketId, newPricingName, paymentMethod = "cash", actorId }) => {
+  if (!mongoose.isValidObjectId(ticketId)) {
+    const error = new Error("Identifiant de billet invalide.");
+    error.status = 400;
+    throw error;
+  }
+  if (!actorId || !mongoose.isValidObjectId(actorId)) {
+    const error = new Error("Utilisateur non authentifié.");
+    error.status = 401;
+    throw error;
+  }
+  if (!newPricingName || typeof newPricingName !== "string") {
+    const error = new Error("Nouveau tarif requis.");
+    error.status = 400;
+    throw error;
+  }
+
+  const ticket = await Ticket.findById(ticketId)
+    .populate({ path: "bookingId", select: "totalAmount paymentMethod status paymentStatus" })
+    .populate({
+      path: "sessionId",
+      select: "date sessionTime pricingLimits eventId",
+      populate: { path: "eventId", select: "name" },
+    })
+    .lean();
+
+  if (!ticket) {
+    const error = new Error("Billet introuvable.");
+    error.status = 404;
+    throw error;
+  }
+
+  const ticketStatus = resolveTicketStatus(ticket);
+  if (ticketStatus !== "active") {
+    const error = new Error(`Ce billet ne peut pas être modifié (statut : ${ticketStatus}).`);
+    error.status = 409;
+    throw error;
+  }
+
+  // Trouver le nouveau tarif dans les pricingLimits de la séance
+  const session = ticket.sessionId && typeof ticket.sessionId === "object" ? ticket.sessionId : null;
+  const pricingLimits = Array.isArray(session?.pricingLimits) ? session.pricingLimits : [];
+  const targetPricing = pricingLimits.find(
+    (p) => p.name.trim().toLowerCase() === newPricingName.trim().toLowerCase()
+  );
+
+  if (!targetPricing) {
+    const error = new Error(`Tarif "${newPricingName}" introuvable pour cette séance.`);
+    error.status = 404;
+    throw error;
+  }
+
+  const oldPrice = Number(ticket.price);
+  const newPrice = Number(targetPricing.price);
+  const priceDiff = Math.round((newPrice - oldPrice) * 100) / 100;
+
+  if (priceDiff < 0) {
+    const error = new Error(
+      `Le nouveau tarif (${newPrice} DT) est inférieur au tarif actuel (${oldPrice} DT). Le remboursement n'est pas autorisé au guichet.`
+    );
+    error.status = 400;
+    throw error;
+  }
+
+  const oldPricingName = ticket.pricingName;
+
+  // Mettre à jour le ticket
+  await Ticket.updateOne(
+    { _id: ticketId },
+    { $set: { pricingName: newPricingName.trim(), price: newPrice } }
+  );
+
+  // Mettre à jour le montant total du booking
+  const booking = ticket.bookingId && typeof ticket.bookingId === "object" ? ticket.bookingId : null;
+  if (booking && booking._id) {
+    const newTotal = Math.round(((Number(booking.totalAmount) || 0) + priceDiff) * 100) / 100;
+    await Booking.updateOne({ _id: booking._id }, { $set: { totalAmount: Math.max(newTotal, 0) } });
+  }
+
+  // Enregistrer la correction si différence de prix > 0
+  let correction = null;
+  if (priceDiff > 0) {
+    correction = await TarifCorrection.create({
+      ticketId,
+      bookingId: booking?._id || ticket.bookingId,
+      sessionId: ticket.sessionId?._id || ticket.sessionId,
+      ticketOfficeId: actorId,
+      seat: ticket.seat,
+      oldPricingName,
+      oldPrice,
+      newPricingName: newPricingName.trim(),
+      newPrice,
+      priceDifference: priceDiff,
+      paymentMethod,
+    });
+  }
+
+  const updatedTicket = await Ticket.findById(ticketId).lean();
+
+  return {
+    ticket: {
+      id: String(updatedTicket._id),
+      code: updatedTicket.code,
+      seat: updatedTicket.seat,
+      pricingName: updatedTicket.pricingName,
+      price: updatedTicket.price,
+      status: resolveTicketStatus(updatedTicket),
+    },
+    correction: correction
+      ? {
+          id: String(correction._id),
+          oldPricingName,
+          oldPrice,
+          newPricingName: correction.newPricingName,
+          newPrice: correction.newPrice,
+          priceDifference: correction.priceDifference,
+          paymentMethod: correction.paymentMethod,
+        }
+      : null,
+    priceDifference: priceDiff,
+    cashRecorded: priceDiff > 0,
   };
 };
 
 module.exports = {
   listTickets,
-  scanTicket
+  scanTicket,
+  searchTicket,
+  repriceTicket,
 };

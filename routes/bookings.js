@@ -14,6 +14,14 @@ router.post("/", authenticate, createBooking);
 router.get("/", authenticate, listBookings);
 router.get("/me", authenticate, listMyBookings);
 router.post("/:bookingId/cancel", authenticate, cancelBookingTickets);
+router.post("/:bookingId/print", authenticate, (req, res) => {
+  const { trackPrint } = require("../controllers/bookingController");
+  return trackPrint(req, res);
+});
+router.post("/:bookingId/print-cancelled", authenticate, (req, res) => {
+  const { trackPrintCancelled } = require("../controllers/bookingController");
+  return trackPrintCancelled(req, res);
+});
 router.get("/:bookingId", authenticate, getBookingById);
 
 module.exports = router;

@@ -97,6 +97,11 @@ const DASHBOARD_PERMISSION_DEFINITIONS = [
     label: "Ventes - Abonnements",
     actions: ["list"],
   },
+  {
+    module: "users",
+    label: "Utilisateurs",
+    actions: ["list", "update"],
+  },
 ];
 
 const STAFF_DASHBOARD_ROLES = ["admin", "super_admin"];

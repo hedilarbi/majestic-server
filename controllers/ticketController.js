@@ -15,9 +15,7 @@ const listTickets = async (req, res) => {
     return res.status(200).json(result);
   } catch (error) {
     const status = error.status || 500;
-    return res.
-    status(status).
-    json({ message: error.message || "Server error" });
+    return res.status(status).json({ message: error.message || "Server error" });
   }
 };
 
@@ -33,17 +31,38 @@ const scanTicket = async (req, res) => {
   } catch (error) {
     const status = error.status || 500;
     const response = { message: error.message || "Server error" };
-    if (error.code) {
-      response.code = error.code;
-    }
-    if (error.details) {
-      response.details = error.details;
-    }
+    if (error.code) response.code = error.code;
+    if (error.details) response.details = error.details;
     return res.status(status).json(response);
+  }
+};
+
+const searchTicket = async (req, res) => {
+  try {
+    const result = await ticketService.searchTicket({ q: req.query.q });
+    return res.status(200).json({ ticket: result });
+  } catch (error) {
+    return res.status(error.status || 500).json({ message: error.message || "Server error" });
+  }
+};
+
+const repriceTicket = async (req, res) => {
+  try {
+    const result = await ticketService.repriceTicket({
+      ticketId: req.params.ticketId,
+      newPricingName: req.body?.newPricingName,
+      paymentMethod: req.body?.paymentMethod || "cash",
+      actorId: req.user?.sub,
+    });
+    return res.status(200).json(result);
+  } catch (error) {
+    return res.status(error.status || 500).json({ message: error.message || "Server error" });
   }
 };
 
 module.exports = {
   listTickets,
-  scanTicket
+  scanTicket,
+  searchTicket,
+  repriceTicket,
 };

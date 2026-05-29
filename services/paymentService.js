@@ -92,14 +92,17 @@ const verifyPayment = async ({ orderId }) => {
 
     const data = await response.json();
     
-    // orderStatus = 2 signifie succès.
-    const isSuccess = data.orderStatus === 2;
+    console.log("[paymentService] verifyPayment raw response:", JSON.stringify(data, null, 2));
+
+    // orderStatus = 2 → approuvé (production)
+    // orderStatus = 1 → pré-autorisé (certains environnements test)
+    const isSuccess = data.orderStatus === 2 || data.orderStatus === 1;
     
     return {
       orderStatus: data.orderStatus,
       isSuccess,
       actionCodeDescription: data.actionCodeDescription,
-      amount: data.amount ? Number(data.amount) / 1000 : 0, // Retour au format classique TND
+      amount: data.amount ? Number(data.amount) / 1000 : 0,
       currency: data.currency,
       orderNumber: data.orderNumber,
     };

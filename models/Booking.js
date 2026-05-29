@@ -168,6 +168,11 @@ const bookingSchema = new mongoose.Schema(
       default: "confirmed",
       index: true,
     },
+    printCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   { timestamps: true },
 );

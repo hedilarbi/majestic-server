@@ -113,6 +113,10 @@ const serializeSubscription = (subscription) => {
     expirationDate: subscription.expirationDate || null,
     isActive: subscription.isActive !== false,
     description: subscription.description || "",
+    allowedSeatType: subscription.allowedSeatType || "normale",
+    maxSeatsPerSession: Number.isFinite(subscription.maxSeatsPerSession)
+      ? subscription.maxSeatsPerSession
+      : 1,
   };
 };
 
@@ -205,6 +209,11 @@ const serializeSubscriptionSale = (sale) => ({
   status: sale.status || "",
   source: sale.source || "",
   createdAt: sale.createdAt || null,
+  // Flat fields for easy access in checkout dropdown
+  allowedSeatType: sale.subscriptionId?.allowedSeatType || "normale",
+  maxSeatsPerSession: Number.isFinite(sale.subscriptionId?.maxSeatsPerSession)
+    ? sale.subscriptionId.maxSeatsPerSession
+    : 1,
 });
 
 const listCustomerBookings = async ({ tokenPayload, page, limit }) => {
@@ -341,7 +350,7 @@ const listCustomerSubscriptionSales = async ({ tokenPayload, page, limit }) => {
       )
       .populate({
         path: "subscriptionId",
-        select: "name price totalCredits expirationDate isActive description",
+        select: "name price totalCredits expirationDate isActive description allowedSeatType maxSeatsPerSession",
       })
       .lean(),
   ]);
