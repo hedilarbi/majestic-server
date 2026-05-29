@@ -10,7 +10,7 @@ const {
   listSubmissionsByForm,
 } = require("../controllers/blogFormSubmissionController");
 const { hasDashboardPermission } = require("../config/dashboardPermissions");
-const { authenticate } = require("../middlewares/auth");
+const { authenticate, optionalAuthenticate } = require("../middlewares/auth");
 
 const router = express.Router();
 
@@ -32,7 +32,7 @@ const requireSubmissionReader = (req, res, next) =>
     return res.status(403).json({ message: "Accès refuse" });
   });
 
-router.post("/forms/:formId", authenticate, createBlogFormSubmission);
+router.post("/forms/:formId", optionalAuthenticate, createBlogFormSubmission);
 router.get("/forms", requireSubmissionReader, listSubmissionForms);
 router.get("/forms/:formId/stats", requireSubmissionReader, getFormStats);
 router.get("/forms/:formId/submissions", requireSubmissionReader, listSubmissionsByForm);

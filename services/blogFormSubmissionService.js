@@ -137,7 +137,6 @@ const buildAnswers = (questions = [], answersPayload = {}) => {
 };
 
 const createBlogFormSubmission = async ({ formId, answers, user }) => {
-  assertCustomer(user);
   assertObjectId(formId, "Formulaire");
 
   const form = await BlogContent.findById(formId)
@@ -158,15 +157,17 @@ const createBlogFormSubmission = async ({ formId, answers, user }) => {
 
   const normalizedAnswers = buildAnswers(form.questions || [], answers);
 
+  const isCustomer = user?.role === "customer";
+
   return BlogFormSubmission.create({
     formId: form._id,
     formTitle: form.title || "Formulaire",
     formSlug: form.slug || "",
-    userId: user.sub,
+    ...(isCustomer && user?.sub ? { userId: user.sub } : {}),
     customerSnapshot: {
-      firstName: normalizeString(user.firstName),
-      lastName: normalizeString(user.lastName),
-      email: normalizeString(user.email),
+      firstName: normalizeString(user?.firstName),
+      lastName: normalizeString(user?.lastName),
+      email: normalizeString(user?.email),
     },
     answers: normalizedAnswers,
   });
