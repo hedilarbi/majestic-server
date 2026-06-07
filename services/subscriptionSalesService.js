@@ -219,12 +219,15 @@ const resolveNumeric = (value, fallback = 0) => {
   return Number.isFinite(numeric) ? numeric : fallback;
 };
 
-const listSubscriptionSales = async ({ page, limit, soldBy, dateFrom, dateTo }) => {
-  const { page: safePage, limit: safeLimit, skip } = resolvePagination(
-    page,
-    limit,
-  );
-
+const buildSubscriptionSalesQuery = ({
+  soldBy,
+  dateFrom,
+  dateTo,
+  paymentMethod,
+  paymentStatus,
+  status,
+  source,
+} = {}) => {
   const query = {};
   if (soldBy) {
     if (!mongoose.isValidObjectId(soldBy)) {
@@ -238,45 +241,90 @@ const listSubscriptionSales = async ({ page, limit, soldBy, dateFrom, dateTo }) 
   if (createdAtFilter) {
     query.createdAt = createdAtFilter;
   }
+  if (paymentMethod) {
+    query.paymentMethod = String(paymentMethod);
+  }
+  if (paymentStatus) {
+    query.paymentStatus = String(paymentStatus);
+  }
+  if (status) {
+    query.status = String(status);
+  }
+  if (source) {
+    query.source = String(source);
+  }
+  return query;
+};
+
+const buildSubscriptionSalesFindQuery = (query, { skip = 0, limit = 200 } = {}) =>
+  SubscriptionSale.find(query)
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limit)
+    .populate({ path: "userId", select: "firstName lastName email phone" })
+    .populate({
+      path: "subscriptionId",
+      select: "name price totalCredits expirationDate isActive",
+    })
+    .populate({ path: "soldBy", select: "firstName lastName email" })
+    .lean();
+
+const serializeSubscriptionSaleListItem = (sale) => ({
+  id: sale._id ? String(sale._id) : null,
+  subscriptionCode: sale.subscriptionCode || "",
+  user: serializeUser(sale.userId),
+  customerContact: serializeCustomerContact(sale.customerContact),
+  subscription: serializeSubscription(sale.subscriptionId),
+  price: sale.price,
+  totalCredits: sale.totalCredits,
+  usedCredits: resolveNumeric(sale.usedCredits, 0),
+  remainingCredits: resolveNumeric(
+    sale.remainingCredits,
+    Math.max(
+      resolveNumeric(sale.totalCredits, 0) - resolveNumeric(sale.usedCredits, 0),
+      0,
+    ),
+  ),
+  paymentMethod: sale.paymentMethod,
+  paymentStatus: sale.paymentStatus,
+  status: sale.status,
+  source: sale.source,
+  lastUsedAt: sale.lastUsedAt || null,
+  soldBy: serializeUser(sale.soldBy),
+  createdAt: sale.createdAt || null,
+});
+
+const listSubscriptionSales = async ({
+  page,
+  limit,
+  soldBy,
+  dateFrom,
+  dateTo,
+  paymentMethod,
+  paymentStatus,
+  status,
+  source,
+}) => {
+  const { page: safePage, limit: safeLimit, skip } = resolvePagination(
+    page,
+    limit,
+  );
+
+  const query = buildSubscriptionSalesQuery({
+    soldBy,
+    dateFrom,
+    dateTo,
+    paymentMethod,
+    paymentStatus,
+    status,
+    source,
+  });
   const [total, sales] = await Promise.all([
     SubscriptionSale.countDocuments(query),
-    SubscriptionSale.find(query)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(safeLimit)
-      .populate({ path: "userId", select: "firstName lastName email phone" })
-      .populate({
-        path: "subscriptionId",
-        select: "name price totalCredits expirationDate isActive",
-      })
-      .populate({ path: "soldBy", select: "firstName lastName email" })
-      .lean(),
+    buildSubscriptionSalesFindQuery(query, { skip, limit: safeLimit }),
   ]);
 
-  const items = sales.map((sale) => ({
-    id: sale._id ? String(sale._id) : null,
-    subscriptionCode: sale.subscriptionCode || "",
-    user: serializeUser(sale.userId),
-    customerContact: serializeCustomerContact(sale.customerContact),
-    subscription: serializeSubscription(sale.subscriptionId),
-    price: sale.price,
-    totalCredits: sale.totalCredits,
-    usedCredits: resolveNumeric(sale.usedCredits, 0),
-    remainingCredits: resolveNumeric(
-      sale.remainingCredits,
-      Math.max(
-        resolveNumeric(sale.totalCredits, 0) - resolveNumeric(sale.usedCredits, 0),
-        0,
-      ),
-    ),
-    paymentMethod: sale.paymentMethod,
-    paymentStatus: sale.paymentStatus,
-    status: sale.status,
-    source: sale.source,
-    lastUsedAt: sale.lastUsedAt || null,
-    soldBy: serializeUser(sale.soldBy),
-    createdAt: sale.createdAt || null,
-  }));
+  const items = sales.map(serializeSubscriptionSaleListItem);
 
   return {
     items,
@@ -284,6 +332,28 @@ const listSubscriptionSales = async ({ page, limit, soldBy, dateFrom, dateTo }) 
     page: safePage,
     limit: safeLimit,
   };
+};
+
+const listSubscriptionSalesForExport = async ({
+  soldBy,
+  dateFrom,
+  dateTo,
+  paymentMethod,
+  paymentStatus,
+  status,
+  source,
+} = {}) => {
+  const query = buildSubscriptionSalesQuery({
+    soldBy,
+    dateFrom,
+    dateTo,
+    paymentMethod,
+    paymentStatus,
+    status,
+    source,
+  });
+  const sales = await buildSubscriptionSalesFindQuery(query, { skip: 0, limit: 5000 });
+  return sales.map(serializeSubscriptionSaleListItem);
 };
 
 const listSubscriptionSalesForUser = async ({ userId, page, limit, dateFrom, dateTo }) => {
@@ -496,6 +566,10 @@ const createSubscriptionSale = async ({ payload, userId, userRole }) => {
       let finalPaymentStatus = "completed";
       let formUrl = null;
 
+      const saleExpiresAt = Number.isFinite(subscription.validityDays) && subscription.validityDays > 0
+        ? new Date(Date.now() + subscription.validityDays * 24 * 60 * 60 * 1000)
+        : null;
+
       const saleDoc = new SubscriptionSale({
         userId: resolvedCustomerUser?._id || null,
         customerContact: resolvedCustomerContact || undefined,
@@ -507,6 +581,7 @@ const createSubscriptionSale = async ({ payload, userId, userRole }) => {
         paymentMethod: resolvedPaymentMethod,
         soldBy: userId,
         source: resolvedSource,
+        ...(saleExpiresAt ? { expiresAt: saleExpiresAt } : {}),
       });
 
       if (resolvedPaymentMethod === "online" && subscription.price > 0) {
@@ -589,6 +664,7 @@ const createSubscriptionSale = async ({ payload, userId, userRole }) => {
 
 module.exports = {
   listSubscriptionSales,
+  listSubscriptionSalesForExport,
   listSubscriptionSalesForUser,
   createSubscriptionSale,
   syncSubscriptionSalesForCustomer,

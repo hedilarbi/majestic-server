@@ -232,17 +232,16 @@ const buildPayload = async ({ payload = {}, files = {}, actorId, existing = null
       data.image = normalizeString(payload.image) || "";
     }
 
-    if (!existing && !data.image) {
-      const error = new Error("L'image de l'article est obligatoire.");
-      error.status = 400;
-      throw error;
+    if (fileThumbnail) {
+      const upload = await uploadImage(fileThumbnail, {
+        folder: "blog/articles/thumbnails",
+      });
+      data.thumbnail = upload.url;
+    } else if (Object.prototype.hasOwnProperty.call(payload, "thumbnail")) {
+      data.thumbnail = normalizeString(payload.thumbnail) || "";
     }
 
-    if (!(data.image || existing?.image)) {
-      const error = new Error("L'image de l'article est obligatoire.");
-      error.status = 400;
-      throw error;
-    }
+    // Image is optional for articles
 
     if (fileImages.length > 0) {
       const uploadedUrls = await Promise.all(
@@ -319,11 +318,19 @@ const buildPayload = async ({ payload = {}, files = {}, actorId, existing = null
     } else if (Object.prototype.hasOwnProperty.call(payload, "image")) {
       data.image = normalizeString(payload.image) || "";
     }
+
+    if (fileThumbnail) {
+      const upload = await uploadImage(fileThumbnail, {
+        folder: "blog/forms/thumbnails",
+      });
+      data.thumbnail = upload.url;
+    } else if (Object.prototype.hasOwnProperty.call(payload, "thumbnail")) {
+      data.thumbnail = normalizeString(payload.thumbnail) || "";
+    }
   }
 
   if (type !== "trailer") {
     data.videoUrl = "";
-    data.thumbnail = "";
   }
 
   if (type !== "form") {
@@ -374,11 +381,15 @@ const deleteAssetUrls = async (urls = []) => {
   }
 };
 
-const listBlogContents = async ({ type, search, isPublished } = {}) => {
+const listBlogContents = async ({ type, types, search, isPublished } = {}) => {
   const filters = {};
 
   if (type) {
     filters.type = normalizeEnumValue(type);
+  } else if (Array.isArray(types) && types.length > 0) {
+    filters.type = {
+      $in: types.map((item) => normalizeEnumValue(item)).filter(Boolean),
+    };
   }
 
   if (typeof isPublished !== "undefined") {

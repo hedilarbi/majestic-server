@@ -144,6 +144,11 @@ const sessionSchema = new mongoose.Schema(
       type: [pricingLimitSchema],
       default: [],
     },
+    sessionType: {
+      type: String,
+      enum: ["normale", "projection_debat", "avant_premiere", "premiere"],
+      default: "normale",
+    },
     status: {
       type: String,
       enum: ["scheduled", "in_progress", "completed", "cancelled", "pending"],

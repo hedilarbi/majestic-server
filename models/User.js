@@ -19,6 +19,24 @@ const UserSchema = new mongoose.Schema(
     phone: {
       type: String,
     },
+    guestContact: {
+      firstName: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+      lastName: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+      email: {
+        type: String,
+        trim: true,
+        lowercase: true,
+        default: "",
+      },
+    },
     role: {
       type: String,
       enum: [
@@ -67,5 +85,6 @@ const UserSchema = new mongoose.Schema(
 );
 
 UserSchema.index({ role: 1, "roleDetails.isActive": 1 });
+UserSchema.index({ "guestContact.email": 1 });
 
 module.exports = mongoose.model("User", UserSchema);

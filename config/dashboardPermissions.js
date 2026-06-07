@@ -63,6 +63,21 @@ const DASHBOARD_PERMISSION_DEFINITIONS = [
     actions: DASHBOARD_PERMISSION_ACTIONS,
   },
   {
+    module: "blog_articles",
+    label: "Blogue - Articles",
+    actions: DASHBOARD_PERMISSION_ACTIONS,
+  },
+  {
+    module: "blog_videos",
+    label: "Blogue - Vidéos",
+    actions: DASHBOARD_PERMISSION_ACTIONS,
+  },
+  {
+    module: "blog_forms",
+    label: "Blogue - Formulaires",
+    actions: DASHBOARD_PERMISSION_ACTIONS,
+  },
+  {
     module: "blog_form_submissions",
     label: "Blogue - Soumissions de formulaires",
     actions: ["list"],

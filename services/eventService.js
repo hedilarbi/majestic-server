@@ -296,14 +296,27 @@ const getHomeContent = async () => {
     ? { _id: { $in: sessionEventIds } }
     : { _id: { $in: [] } };
 
+  const releasedFilter = {
+    $or: [{ releaseDate: null }, { releaseDate: { $exists: false } }, { releaseDate: { $lte: now } }],
+  };
+  const upcomingHomeFilter = {
+    status: "active",
+    availableTo: { $gte: now },
+    $or: [
+      { releaseDate: { $gt: now } },
+      { releaseDate: null, availableFrom: { $gt: now } },
+      { releaseDate: { $exists: false }, availableFrom: { $gt: now } },
+    ],
+  };
+
   const [movies, shows, upcoming, homeSlider] = await Promise.all([
-    Event.find({ ...activeWindow, ...sessionFilter, type: "movie" }).sort({
+    Event.find({ ...activeWindow, ...sessionFilter, ...releasedFilter, type: "movie" }).sort({
       availableFrom: 1,
     }),
-    Event.find({ ...activeWindow, ...sessionFilter, type: "show" }).sort({
+    Event.find({ ...activeWindow, ...sessionFilter, ...releasedFilter, type: "show" }).sort({
       availableFrom: 1,
     }),
-    Event.find({ status: "active", availableFrom: { $gt: now } }).sort({
+    Event.find(upcomingHomeFilter).sort({
       availableFrom: 1,
     }),
     HomeHero.find({ active: true })
@@ -352,11 +365,19 @@ const getEventsWithALAffiche = async ({ type, genre }) => {
     ...baseFilters,
     availableFrom: { $lte: now },
     availableTo: { $gte: now },
+    // Only show events where releaseDate is not set or already passed
+    $or: [{ releaseDate: null }, { releaseDate: { $exists: false } }, { releaseDate: { $lte: now } }],
   };
 
   const upcomingFilters = {
     ...baseFilters,
-    availableFrom: { $gt: now },
+    availableTo: { $gte: now },
+    // Prochainement = releaseDate in the future, or no releaseDate but availableFrom in the future
+    $or: [
+      { releaseDate: { $gt: now } },
+      { releaseDate: null, availableFrom: { $gt: now } },
+      { releaseDate: { $exists: false }, availableFrom: { $gt: now } },
+    ],
   };
 
   const afficheFilter = { active: true };

@@ -21,27 +21,100 @@ const resolvePagination = (page, limit) => {
   };
 };
 
-const listUsers = async ({ page, limit, search, role, status }) => {
-  const { page: safePage, limit: safeLimit, skip } = resolvePagination(page, limit);
+const ALLOWED_ROLES = ["customer", "guest"];
 
+const parseDateFilter = (value, label, boundary) => {
+  if (!value) {
+    return null;
+  }
+
+  const normalizedValue = String(value).trim();
+  if (!normalizedValue) {
+    return null;
+  }
+
+  const parsed = new Date(normalizedValue);
+  if (Number.isNaN(parsed.getTime())) {
+    const error = new Error(`${label} invalide`);
+    error.status = 400;
+    throw error;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalizedValue)) {
+    if (boundary === "end") {
+      parsed.setHours(23, 59, 59, 999);
+    } else {
+      parsed.setHours(0, 0, 0, 0);
+    }
+  }
+
+  return parsed;
+};
+
+const buildUsersQuery = ({ search, role, status, dateFrom, dateTo } = {}) => {
   const query = {};
-  
+
+  if (role && ALLOWED_ROLES.includes(role)) {
+    query.role = role;
+  } else {
+    query.role = { $in: ALLOWED_ROLES };
+  }
+
   if (search) {
     query.$or = [
       { firstName: { $regex: search, $options: "i" } },
       { lastName: { $regex: search, $options: "i" } },
       { email: { $regex: search, $options: "i" } },
+      { "guestContact.firstName": { $regex: search, $options: "i" } },
+      { "guestContact.lastName": { $regex: search, $options: "i" } },
+      { "guestContact.email": { $regex: search, $options: "i" } },
       { phone: { $regex: search, $options: "i" } },
     ];
-  }
-
-  if (role) {
-    query.role = role;
   }
 
   if (status) {
     query.status = status;
   }
+
+  const from = parseDateFilter(dateFrom, "dateFrom", "start");
+  const to = parseDateFilter(dateTo, "dateTo", "end");
+  if (from && to && from.getTime() > to.getTime()) {
+    const error = new Error("dateFrom doit être antérieure à dateTo");
+    error.status = 400;
+    throw error;
+  }
+  if (from || to) {
+    query.createdAt = {
+      ...(from ? { $gte: from } : {}),
+      ...(to ? { $lte: to } : {}),
+    };
+  }
+
+  return query;
+};
+
+const normalizeAdminUser = (user) => {
+  if (!user) {
+    return user;
+  }
+
+  if (user.role !== "guest" || !user.guestContact) {
+    return user;
+  }
+
+  return {
+    ...user,
+    technicalEmail: user.email,
+    firstName: user.firstName || user.guestContact.firstName || "",
+    lastName: user.lastName || user.guestContact.lastName || "",
+    email: user.guestContact.email || user.email || "",
+  };
+};
+
+const listUsers = async ({ page, limit, search, role, status, dateFrom, dateTo }) => {
+  const { page: safePage, limit: safeLimit, skip } = resolvePagination(page, limit);
+
+  const query = buildUsersQuery({ search, role, status, dateFrom, dateTo });
 
   const [total, items] = await Promise.all([
     User.countDocuments(query),
@@ -54,11 +127,22 @@ const listUsers = async ({ page, limit, search, role, status }) => {
   ]);
 
   return {
-    items,
+    items: items.map(normalizeAdminUser),
     total,
     page: safePage,
     limit: safeLimit,
   };
+};
+
+const listUsersForExport = async ({ search, role, status, dateFrom, dateTo } = {}) => {
+  const query = buildUsersQuery({ search, role, status, dateFrom, dateTo });
+  const items = await User.find(query)
+    .sort({ createdAt: -1 })
+    .limit(5000)
+    .select("-password")
+    .lean();
+
+  return items.map(normalizeAdminUser);
 };
 
 const getUserDetails = async (userId) => {
@@ -93,7 +177,7 @@ const getUserDetails = async (userId) => {
     .lean();
 
   return {
-    user,
+    user: normalizeAdminUser(user),
     bookings,
     subscriptions,
   };
@@ -124,6 +208,7 @@ const toggleUserStatus = async (userId) => {
 
 module.exports = {
   listUsers,
+  listUsersForExport,
   getUserDetails,
   toggleUserStatus,
 };

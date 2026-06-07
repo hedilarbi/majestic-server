@@ -15,6 +15,94 @@ const ACTIVE_SUBSCRIPTION_SALE_STATUSES = ["confirmed"];
 const COMPLETED_SUBSCRIPTION_PAYMENT_STATUS = "completed";
 const PERIOD_ORIGIN = new Date(0);
 
+const toValidDate = (value) => {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const parseFilterDate = (value, label, boundary = "start") => {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      const error = new Error(`${label} invalide`);
+      error.status = 400;
+      throw error;
+    }
+
+    return value;
+  }
+
+  if (typeof value !== "string") {
+    const error = new Error(`${label} invalide`);
+    error.status = 400;
+    throw error;
+  }
+
+  const normalizedValue = value.trim();
+  if (!normalizedValue) {
+    return null;
+  }
+
+  const dateOnlyMatch = normalizedValue.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnlyMatch) {
+    const [, year, month, day] = dateOnlyMatch;
+    return boundary === "end"
+      ? new Date(Number(year), Number(month) - 1, Number(day), 23, 59, 59, 999)
+      : new Date(Number(year), Number(month) - 1, Number(day), 0, 0, 0, 0);
+  }
+
+  const parsed = new Date(normalizedValue);
+  if (Number.isNaN(parsed.getTime())) {
+    const error = new Error(`${label} invalide`);
+    error.status = 400;
+    throw error;
+  }
+
+  return parsed;
+};
+
+const buildClosedAtFilter = ({ dateFrom, dateTo } = {}) => {
+  const fromDate = parseFilterDate(dateFrom, "dateFrom", "start");
+  const toDate = parseFilterDate(dateTo, "dateTo", "end");
+
+  if (!fromDate && !toDate) {
+    return null;
+  }
+
+  if (fromDate && toDate && fromDate.getTime() > toDate.getTime()) {
+    const error = new Error("dateFrom must be before dateTo");
+    error.status = 400;
+    throw error;
+  }
+
+  return {
+    ...(fromDate ? { $gte: fromDate } : {}),
+    ...(toDate ? { $lte: toDate } : {}),
+  };
+};
+
+const startOfBusinessDay = (value) => {
+  const date = toValidDate(value) || new Date();
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+};
+
+const addBusinessDays = (value, days) => {
+  const date = startOfBusinessDay(value);
+  date.setDate(date.getDate() + days);
+  return date;
+};
+
+const getTimestamp = (value) => {
+  const date = toValidDate(value);
+  return date ? date.getTime() : 0;
+};
+
 const ensureValidObjectId = (value, label) => {
   if (!mongoose.isValidObjectId(value)) {
     const error = new Error(`${label} invalide`);
@@ -616,13 +704,17 @@ const buildTransactionSummary = (booking, ticketsByBookingId) => {
   };
 };
 
-const loadRegisterTransactions = async ({ ticketOfficeId, periodStartAt }) => {
+const loadRegisterTransactions = async ({
+  ticketOfficeId,
+  periodStartAt,
+  periodEndAt = null,
+}) => {
   const [bookings, subscriptionRegister] = await Promise.all([
     Booking.find({
       bookedBy: ticketOfficeId,
       bookingSource: "ticket_office",
       status: { $in: ACTIVE_BOOKING_STATUSES },
-      createdAt: { $gt: periodStartAt || PERIOD_ORIGIN },
+      createdAt: buildSalesPeriodFilter({ periodStartAt, periodEndAt }),
     })
       .select(
         "bookingNumber sessionId seats totalAmount paymentMethod promotion subscriptionTransaction createdAt",
@@ -640,6 +732,7 @@ const loadRegisterTransactions = async ({ ticketOfficeId, periodStartAt }) => {
     loadSubscriptionSaleSummaries({
       ticketOfficeId,
       periodStartAt,
+      periodEndAt,
     }),
   ]);
 
@@ -672,6 +765,156 @@ const loadRegisterTransactions = async ({ ticketOfficeId, periodStartAt }) => {
       subscriptionRegister.lastTransactionAt,
     ),
   };
+};
+
+const getSaleCreatedAt = (item) => toValidDate(item?.createdAt);
+
+const itemBelongsToPeriod = ({ item, periodStartAt, periodEndAt }) => {
+  const createdAt = getSaleCreatedAt(item);
+  if (!createdAt) {
+    return false;
+  }
+
+  const timestamp = createdAt.getTime();
+  return (
+    timestamp > getTimestamp(periodStartAt || PERIOD_ORIGIN) &&
+    timestamp <= getTimestamp(periodEndAt)
+  );
+};
+
+const summarizeRegisterPeriod = ({
+  businessDate,
+  periodStartAt,
+  periodEndAt,
+  transactions,
+  subscriptionSales,
+  isAutoClosed,
+}) => {
+  const safeTransactions = Array.isArray(transactions) ? transactions : [];
+  const safeSubscriptionSales = Array.isArray(subscriptionSales)
+    ? subscriptionSales
+    : [];
+  const bookingAmount = safeTransactions.reduce(
+    (total, transaction) => total + (transaction.totalAmount || 0),
+    0,
+  );
+  const subscriptionAmount = safeSubscriptionSales.reduce(
+    (total, sale) => total + (sale.totalAmount || 0),
+    0,
+  );
+
+  return {
+    id: `${getTimestamp(periodStartAt)}:${getTimestamp(periodEndAt)}`,
+    businessDate,
+    periodStartAt,
+    periodEndAt,
+    isAutoClosed,
+    amount: roundAmount(bookingAmount + subscriptionAmount),
+    saleCount: safeTransactions.length + safeSubscriptionSales.length,
+    bookingCount: safeTransactions.length,
+    ticketCount: safeTransactions.reduce(
+      (total, transaction) => total + (transaction.ticketCount || 0),
+      0,
+    ),
+    subscriptionSaleCount: safeSubscriptionSales.length,
+    lastTransactionAt: getMostRecentDate(
+      safeTransactions[0]?.createdAt,
+      safeSubscriptionSales[0]?.createdAt,
+    ),
+    transactions: safeTransactions.map(serializeTransactionSummary),
+    subscriptionSales: safeSubscriptionSales.map(serializeSubscriptionSaleSummary),
+  };
+};
+
+const buildPendingRegisterPeriods = ({
+  register,
+  periodStartAt,
+  now = new Date(),
+}) => {
+  const transactions = Array.isArray(register?.transactions)
+    ? register.transactions
+    : [];
+  const subscriptionSales = Array.isArray(register?.subscriptionSales)
+    ? register.subscriptionSales
+    : [];
+  const saleDates = [...transactions, ...subscriptionSales]
+    .map(getSaleCreatedAt)
+    .filter(Boolean)
+    .sort((left, right) => left.getTime() - right.getTime());
+
+  if (saleDates.length === 0) {
+    return [];
+  }
+
+  const safeNow = toValidDate(now) || new Date();
+  const baseStart = toValidDate(periodStartAt) || PERIOD_ORIGIN;
+  const firstSaleDay = startOfBusinessDay(saleDates[0]);
+  const todayStart = startOfBusinessDay(safeNow);
+  const periods = [];
+
+  for (
+    let dayStart = firstSaleDay;
+    dayStart.getTime() <= todayStart.getTime();
+    dayStart = addBusinessDays(dayStart, 1)
+  ) {
+    const nextDayStart = addBusinessDays(dayStart, 1);
+    const periodStart =
+      periods.length === 0 && baseStart.getTime() < nextDayStart.getTime()
+        ? baseStart
+        : dayStart;
+    const periodEnd =
+      nextDayStart.getTime() <= safeNow.getTime() ? nextDayStart : safeNow;
+
+    if (periodEnd.getTime() <= periodStart.getTime()) {
+      continue;
+    }
+
+    const periodTransactions = transactions.filter((transaction) =>
+      itemBelongsToPeriod({
+        item: transaction,
+        periodStartAt: periodStart,
+        periodEndAt: periodEnd,
+      }),
+    );
+    const periodSubscriptionSales = subscriptionSales.filter((sale) =>
+      itemBelongsToPeriod({
+        item: sale,
+        periodStartAt: periodStart,
+        periodEndAt: periodEnd,
+      }),
+    );
+
+    if (periodTransactions.length === 0 && periodSubscriptionSales.length === 0) {
+      continue;
+    }
+
+    periods.push(
+      summarizeRegisterPeriod({
+        businessDate: dayStart,
+        periodStartAt: periodStart,
+        periodEndAt: periodEnd,
+        transactions: periodTransactions,
+        subscriptionSales: periodSubscriptionSales,
+        isAutoClosed: nextDayStart.getTime() <= safeNow.getTime(),
+      }),
+    );
+  }
+
+  return periods;
+};
+
+const loadTicketOfficePendingPeriods = async ({
+  ticketOfficeId,
+  periodStartAt,
+}) => {
+  const register = await loadRegisterTransactions({
+    ticketOfficeId,
+    periodStartAt,
+  });
+  return buildPendingRegisterPeriods({
+    register,
+    periodStartAt,
+  });
 };
 
 const loadCashierRegisterTransfers = async ({ cashierId, periodStartAt }) => {
@@ -962,6 +1205,10 @@ const listTicketOfficeRegisters = async ({ cashierId }) => {
         ticketOfficeId: ticketOffice._id,
         periodStartAt: currentPeriodStart,
       });
+      const pendingPeriods = buildPendingRegisterPeriods({
+        register,
+        periodStartAt: currentPeriodStart,
+      });
 
       return {
         staff: serializeStaff(ticketOffice),
@@ -972,7 +1219,22 @@ const listTicketOfficeRegisters = async ({ cashierId }) => {
           ticketCount: register.ticketCount,
           subscriptionSaleCount: register.subscriptionSaleCount,
           lastTransactionAt: register.lastTransactionAt,
+          pendingPeriodCount: pendingPeriods.length,
+          oldestPendingPeriodAt: pendingPeriods[0]?.businessDate || null,
         },
+        pendingPeriods: pendingPeriods.map((period) => ({
+          id: period.id,
+          businessDate: period.businessDate,
+          periodStartAt: period.periodStartAt,
+          periodEndAt: period.periodEndAt,
+          isAutoClosed: period.isAutoClosed,
+          amount: period.amount,
+          saleCount: period.saleCount,
+          bookingCount: period.bookingCount,
+          ticketCount: period.ticketCount,
+          subscriptionSaleCount: period.subscriptionSaleCount,
+          lastTransactionAt: period.lastTransactionAt,
+        })),
         lastClosure: lastClosure
           ? {
               id: lastClosure._id.toString(),
@@ -999,6 +1261,10 @@ const getTicketOfficeRegisterDetails = async ({ ticketOfficeId }) => {
     ticketOfficeId,
     periodStartAt,
   });
+  const pendingPeriods = buildPendingRegisterPeriods({
+    register,
+    periodStartAt,
+  });
 
   return {
     staff: serializeStaff(ticketOffice),
@@ -1009,8 +1275,11 @@ const getTicketOfficeRegisterDetails = async ({ ticketOfficeId }) => {
       ticketCount: register.ticketCount,
       subscriptionSaleCount: register.subscriptionSaleCount,
       lastTransactionAt: register.lastTransactionAt,
+      pendingPeriodCount: pendingPeriods.length,
+      oldestPendingPeriodAt: pendingPeriods[0]?.businessDate || null,
     },
     lastClosure: lastClosure ? serializeClosure(lastClosure) : null,
+    pendingPeriods,
     transactions: register.transactions.map(serializeTransactionSummary),
     subscriptionSales: register.subscriptionSales.map(serializeSubscriptionSaleSummary),
   };
@@ -1165,21 +1434,87 @@ const closeCashierRegister = async ({ cashierId, supervisorId }) => {
   };
 };
 
-const closeTicketOfficeRegister = async ({ ticketOfficeId, cashierId }) => {
+const listSupervisorCashierClosures = async ({
+  supervisorId,
+  limit = 200,
+  maxLimit = 500,
+  dateFrom,
+  dateTo,
+}) => {
+  await getSupervisorUser(supervisorId);
+
+  const safeMaxLimit = Math.max(Number.parseInt(maxLimit, 10) || 500, 1);
+  const safeLimit = Math.min(
+    Math.max(Number.parseInt(limit, 10) || 200, 1),
+    safeMaxLimit,
+  );
+  const query = {};
+  const closedAtFilter = buildClosedAtFilter({ dateFrom, dateTo });
+  if (closedAtFilter) {
+    query.closedAt = closedAtFilter;
+  }
+
+  const closures = await CashierRegisterClosure.find(query)
+    .sort({ closedAt: -1, createdAt: -1 })
+    .limit(safeLimit)
+    .lean();
+
+  return {
+    items: closures.map(serializeCashierClosure),
+  };
+};
+
+const closeTicketOfficeRegister = async ({
+  ticketOfficeId,
+  cashierId,
+  periodStartAt: requestedPeriodStartAt = null,
+}) => {
   const [ticketOffice, cashier, lastClosure] = await Promise.all([
     getTicketOfficeUser(ticketOfficeId),
     getCashierUser(cashierId),
     getLastClosureForTicketOffice(ticketOfficeId),
   ]);
 
-  const periodStartAt = lastClosure?.periodEndAt || PERIOD_ORIGIN;
+  const openPeriodStartAt = lastClosure?.periodEndAt || PERIOD_ORIGIN;
+  const pendingPeriods = await loadTicketOfficePendingPeriods({
+    ticketOfficeId,
+    periodStartAt: openPeriodStartAt,
+  });
+
+  if (pendingPeriods.length === 0) {
+    const error = new Error("Aucune vente à clôturer pour ce guichet");
+    error.status = 400;
+    throw error;
+  }
+
+  const requestedPeriodStart = toValidDate(requestedPeriodStartAt);
+  const selectedPeriod = requestedPeriodStart
+    ? pendingPeriods.find(
+        (period) =>
+          getTimestamp(period.periodStartAt) === requestedPeriodStart.getTime(),
+      )
+    : pendingPeriods[0];
+
+  if (!selectedPeriod) {
+    const error = new Error("Feuille de caisse introuvable ou déjà clôturée.");
+    error.status = 404;
+    throw error;
+  }
+
+  if (selectedPeriod.id !== pendingPeriods[0].id) {
+    const error = new Error("Clôturez d'abord la feuille la plus ancienne.");
+    error.status = 409;
+    throw error;
+  }
+
   const register = await loadRegisterTransactions({
     ticketOfficeId,
-    periodStartAt,
+    periodStartAt: selectedPeriod.periodStartAt,
+    periodEndAt: selectedPeriod.periodEndAt,
   });
 
   if (register.saleCount === 0) {
-    const error = new Error("Aucune vente à clôturer pour ce guichet");
+    const error = new Error("Aucune vente à clôturer pour cette feuille.");
     error.status = 400;
     throw error;
   }
@@ -1194,8 +1529,8 @@ const closeTicketOfficeRegister = async ({ ticketOfficeId, cashierId }) => {
       ticketOfficeSnapshot: buildStaffSnapshot(ticketOffice),
       cashierId,
       cashierSnapshot: buildStaffSnapshot(cashier),
-      periodStartAt,
-      periodEndAt: closedAt,
+      periodStartAt: selectedPeriod.periodStartAt,
+      periodEndAt: selectedPeriod.periodEndAt,
       closedAt,
       amount: register.amount,
       bookingCount: register.bookingCount,
@@ -1275,4 +1610,5 @@ module.exports = {
   listCashierRegisters,
   listCashierClosures,
   listTicketOfficeRegisters,
+  listSupervisorCashierClosures,
 };

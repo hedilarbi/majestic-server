@@ -34,9 +34,25 @@ router.post("/verify", async (req, res) => {
 
     // Si le paiement est déjà traité (pour éviter les doubles traitements)
     if (entity.paymentStatus === "completed" || entity.paymentStatus === "failed") {
+      if (entity.paymentStatus === "completed") {
+        try {
+          if (type === "booking") {
+            enqueueBookingTicketEmail({ bookingId: entity._id });
+          } else if (type === "subscription") {
+            enqueueSubscriptionSaleEmail({ saleId: entity._id });
+          }
+        } catch (error) {
+          console.error("[payments] Erreur lors de la relance de l'email:", error);
+        }
+      }
+
       return res.status(200).json({ 
         status: entity.paymentStatus, 
-        message: "Paiement déjà traité." 
+        message: "Paiement déjà traité.",
+        type,
+        seanceId: entity.sessionId,
+        bookingId: type === "booking" ? entity._id : null,
+        saleId: type === "subscription" ? entity._id : null,
       });
     }
 

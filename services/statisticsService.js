@@ -140,6 +140,20 @@ const formatCurrency = (value) => {
   return `${formatted} DT`;
 };
 
+const formatPricingAmount = (value) => {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) {
+    return "";
+  }
+
+  return amount
+    .toLocaleString("fr-FR", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+    .replace(/[\u00A0\u202F]/g, " ");
+};
+
 const combineSessionDateTime = (dateValue, sessionTime) => {
   const date = new Date(dateValue);
   if (Number.isNaN(date.getTime())) {
@@ -205,6 +219,68 @@ const mapToSortedArray = (map, sorter) =>
     .map(([key, value]) => ({ key, ...value }))
     .sort(sorter);
 
+const buildPricingBreakdown = (tickets = []) => {
+  const pricingMap = new Map();
+
+  tickets.forEach((ticket) => {
+    const pricingName =
+      String(ticket?.pricingName || "Tarif").trim() || "Tarif";
+    const price = Number(ticket?.price) || 0;
+    const key = `${pricingName}:${price}`;
+    const current = pricingMap.get(key) || {
+      pricingName,
+      price,
+      ticketsSold: 0,
+    };
+
+    pricingMap.set(key, {
+      ...current,
+      ticketsSold: current.ticketsSold + 1,
+    });
+  });
+
+  return Array.from(pricingMap.values()).sort((left, right) => {
+    const byCount = right.ticketsSold - left.ticketsSold;
+    if (byCount !== 0) {
+      return byCount;
+    }
+
+    return left.pricingName.localeCompare(right.pricingName, "fr");
+  });
+};
+
+const formatPricingBreakdownLabel = (items = []) => {
+  if (!Array.isArray(items) || items.length === 0) {
+    return "-";
+  }
+
+  return items
+    .map((item) => {
+      const priceLabel = formatPricingAmount(item?.price);
+      const pricingLabel = priceLabel
+        ? `${item.pricingName} (${priceLabel} DT)`
+        : item.pricingName;
+      return `${pricingLabel}: ${item.ticketsSold || 0}`;
+    })
+    .join("\n");
+};
+
+const formatPricingSummaryInline = (items = []) => {
+  if (!Array.isArray(items) || items.length === 0) {
+    return "";
+  }
+
+  return items
+    .map((item) => {
+      const name =
+        String(item?.pricingName || item?.label || "Tarif").trim() || "Tarif";
+      const priceLabel = formatPricingAmount(item?.price);
+      const label = priceLabel ? `${name} (${priceLabel} DT)` : name;
+      return `${label}: ${item?.ticketsSold || 0}`;
+    })
+    .join("   ");
+};
+
 const buildStatistics = async ({ dateStart, dateEnd, eventId, sessionTime }) => {
   const resolvedEventId = ensureValidEventId(eventId);
   const resolvedSessionTime = normalizeSessionTimeFilter(sessionTime);
@@ -266,6 +342,8 @@ const buildStatistics = async ({ dateStart, dateEnd, eventId, sessionTime }) => 
         sessionsCount: 0,
         soldTickets: 0,
         remainingTickets: 0,
+        subscriptionTickets: 0,
+        promotionDiscountAmount: 0,
         revenue: 0,
         bookingsCount: 0,
       },
@@ -328,14 +406,38 @@ const buildStatistics = async ({ dateStart, dateEnd, eventId, sessionTime }) => 
     sessions.map((session) => {
       const sessionKey = session._id.toString();
       const relatedBookings = bookingsBySessionId.get(sessionKey) || [];
+      const relatedTickets = relatedBookings.flatMap((booking) => {
+        const bookingKey = booking?._id ? booking._id.toString() : "";
+        return bookingKey ? ticketsByBookingId.get(bookingKey) || [] : [];
+      });
       const soldTickets = relatedBookings.reduce(
-        (total, booking) => total + (Array.isArray(booking.seats) ? booking.seats.length : 0),
+        (total, booking) =>
+          total + (Array.isArray(booking.seats) ? booking.seats.length : 0),
         0,
       );
       const revenue = relatedBookings.reduce(
         (total, booking) => total + (Number(booking.totalAmount) || 0),
         0,
       );
+      const subscriptionTickets = relatedBookings.reduce((total, booking) => {
+        const usesSubscription =
+          booking.paymentMethod === "subscription" ||
+          Boolean(booking?.subscriptionTransaction?.subscriptionCode);
+
+        if (!usesSubscription) {
+          return total;
+        }
+
+        return (
+          total + (Array.isArray(booking.seats) ? booking.seats.length : 0)
+        );
+      }, 0);
+      const promotionDiscountAmount = relatedBookings.reduce(
+        (total, booking) =>
+          total + (Number(booking?.promotion?.discountAmount) || 0),
+        0,
+      );
+      const pricingBreakdown = buildPricingBreakdown(relatedTickets);
 
       return {
         sessionId: sessionKey,
@@ -351,6 +453,9 @@ const buildStatistics = async ({ dateStart, dateEnd, eventId, sessionTime }) => 
         sessionTime: session.sessionTime || "",
         remainingTickets: Number(session.availableSeats) || 0,
         soldTickets,
+        pricingBreakdown,
+        subscriptionTickets,
+        promotionDiscountAmount,
         revenue,
         totalSeats: Number(session.totalSeats) || 0,
         status: session.status || "",
@@ -483,6 +588,10 @@ const buildStatistics = async ({ dateStart, dateEnd, eventId, sessionTime }) => 
       sessionsCount: accumulator.sessionsCount + 1,
       soldTickets: accumulator.soldTickets + row.soldTickets,
       remainingTickets: accumulator.remainingTickets + row.remainingTickets,
+      subscriptionTickets:
+        accumulator.subscriptionTickets + row.subscriptionTickets,
+      promotionDiscountAmount:
+        accumulator.promotionDiscountAmount + row.promotionDiscountAmount,
       revenue: accumulator.revenue + row.revenue,
       bookingsCount: accumulator.bookingsCount,
     }),
@@ -490,6 +599,8 @@ const buildStatistics = async ({ dateStart, dateEnd, eventId, sessionTime }) => 
       sessionsCount: 0,
       soldTickets: 0,
       remainingTickets: 0,
+      subscriptionTickets: 0,
+      promotionDiscountAmount: 0,
       revenue: 0,
       bookingsCount: bookings.length,
     },
@@ -615,6 +726,7 @@ const buildSessionSalesPdf = async ({
     `Événement: ${eventName}`,
     `Heure de séance: ${statistics.filters.sessionTime || "Toutes"}`,
   ];
+  const pricingSummary = formatPricingSummaryInline(statistics.charts.pricing);
 
   const title = "Rapport statistiques - ventes par séance";
   const filenameParts = [
@@ -652,12 +764,16 @@ const buildSessionSalesPdf = async ({
     const margin = doc.page.margins.left;
     const contentWidth = pageWidth - margin * 2;
     const columnWidths = [
-      contentWidth * 0.4,
-      contentWidth * 0.28,
-      contentWidth * 0.14,
-      contentWidth * 0.18,
+      contentWidth * 0.22,
+      contentWidth * 0.13,
+      contentWidth * 0.08,
+      contentWidth * 0.24,
+      contentWidth * 0.1,
+      contentWidth * 0.11,
+      contentWidth * 0.12,
     ];
-    const rowHeight = 26;
+    const tableHeaderHeight = 30;
+    const minimumRowHeight = 34;
     const tableLeft = margin;
     const pageBottomLimit = pageHeight - doc.page.margins.bottom;
     const filterLineHeight = 12;
@@ -699,12 +815,28 @@ const buildSessionSalesPdf = async ({
 
       cursorY += filterBoxHeight + 16;
 
+      const ticketsSummaryLine = `Séances: ${statistics.totals.sessionsCount}   Billets vendus: ${statistics.totals.soldTickets}${pricingSummary ? ` (${pricingSummary})` : ""}   Recette: ${formatCurrency(statistics.totals.revenue)}`;
+
       doc
         .fillColor("#0f172a")
         .font("Helvetica-Bold")
         .fontSize(11)
         .text(
-          `Séances: ${statistics.totals.sessionsCount}   Billets vendus: ${statistics.totals.soldTickets}   Recette: ${formatCurrency(statistics.totals.revenue)}`,
+          ticketsSummaryLine,
+          margin,
+          cursorY,
+          { width: contentWidth },
+        );
+
+      cursorY +=
+        doc.heightOfString(ticketsSummaryLine, { width: contentWidth }) + 5;
+
+      doc
+        .fillColor("#0f172a")
+        .font("Helvetica-Bold")
+        .fontSize(10)
+        .text(
+          `Billets abonnement: ${statistics.totals.subscriptionTickets || 0}   Promotions: ${formatCurrency(statistics.totals.promotionDiscountAmount || 0)}`,
           margin,
           cursorY,
           { width: contentWidth },
@@ -722,30 +854,59 @@ const buildSessionSalesPdf = async ({
       let columnX = tableLeft;
 
       doc
-        .rect(tableLeft, cursorY, contentWidth, rowHeight)
+        .rect(tableLeft, cursorY, contentWidth, tableHeaderHeight)
         .fill("#1034a6");
-      doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(10);
+      doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(8.5);
 
       [
         "Événement",
         "Séance",
         "Billets vendus",
+        "Par tarif",
+        "Abonnement",
+        "Promotion",
         "Recette",
       ].forEach((label, index) => {
-        doc.text(label, columnX + 8, cursorY + 8, {
-          width: columnWidths[index] - 16,
+        doc.text(label, columnX + 6, cursorY + 8, {
+          width: columnWidths[index] - 12,
+          lineGap: 1,
         });
         columnX += columnWidths[index];
       });
 
-      cursorY += rowHeight;
+      cursorY += tableHeaderHeight;
     };
 
-    const ensureRowSpace = () => {
-      if (cursorY + rowHeight > pageBottomLimit) {
+    const ensureRowSpace = (requiredHeight) => {
+      if (cursorY + requiredHeight > pageBottomLimit) {
         startContinuationPage();
         drawTableHeader();
       }
+    };
+
+    const buildRowValues = (row) => [
+      row.eventName || "-",
+      `${formatDateLabel(row.date)}${row.sessionTime ? ` • ${row.sessionTime}` : ""}`,
+      String(row.soldTickets || 0),
+      formatPricingBreakdownLabel(row.pricingBreakdown),
+      String(row.subscriptionTickets || 0),
+      formatCurrency(row.promotionDiscountAmount || 0),
+      formatCurrency(row.revenue || 0),
+    ];
+
+    const measureRowHeight = (rowValues) => {
+      doc.font("Helvetica").fontSize(8.2);
+
+      const textHeight = rowValues.reduce((maxHeight, value, index) => {
+        const height = doc.heightOfString(String(value), {
+          width: columnWidths[index] - 12,
+          lineGap: 1,
+        });
+
+        return Math.max(maxHeight, height);
+      }, 0);
+
+      return Math.max(minimumRowHeight, textHeight + 16);
     };
 
     drawReportHeader();
@@ -762,32 +923,30 @@ const buildSessionSalesPdf = async ({
     }
 
     statistics.sessionRows.forEach((row, rowIndex) => {
-      ensureRowSpace();
+      const rowValues = buildRowValues(row);
+      const currentRowHeight = measureRowHeight(rowValues);
+
+      ensureRowSpace(currentRowHeight);
 
       const backgroundColor = rowIndex % 2 === 0 ? "#ffffff" : "#f8fafc";
       let columnX = tableLeft;
 
       doc
-        .rect(tableLeft, cursorY, contentWidth, rowHeight)
+        .rect(tableLeft, cursorY, contentWidth, currentRowHeight)
         .fillAndStroke(backgroundColor, "#e2e8f0");
-      doc.fillColor("#0f172a").font("Helvetica").fontSize(9.5);
-
-      const rowValues = [
-        row.eventName || "-",
-        `${formatDateLabel(row.date)}${row.sessionTime ? ` • ${row.sessionTime}` : ""}`,
-        String(row.soldTickets || 0),
-        formatCurrency(row.revenue || 0),
-      ];
+      doc.fillColor("#0f172a").font("Helvetica").fontSize(8.2);
 
       rowValues.forEach((value, index) => {
-        doc.text(value, columnX + 8, cursorY + 8, {
-          width: columnWidths[index] - 16,
+        doc.text(value, columnX + 6, cursorY + 8, {
+          width: columnWidths[index] - 12,
+          height: currentRowHeight - 16,
+          lineGap: 1,
           ellipsis: true,
         });
         columnX += columnWidths[index];
       });
 
-      cursorY += rowHeight;
+      cursorY += currentRowHeight;
     });
 
     doc.end();

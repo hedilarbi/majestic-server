@@ -9,6 +9,7 @@ const Session = require("../models/Session");
 const Pricing = require("../models/Pricing");
 const SubscriptionSale = require("../models/SubscriptionSale");
 const promoCodeService = require("./promoCodeService");
+const guestService = require("./guestService");
 const { enqueueBookingTicketEmail } = require("./ticketDeliveryService");
 const auditLogService = require("./auditLogService");
 const { registerPayment } = require("./paymentService");
@@ -564,18 +565,22 @@ const serializeTicket = (ticket) => ({
   seat: ticket.seat || null,
   pricingName: ticket.pricingName || "",
   price: ticket.price,
+  printCount: Number.isFinite(ticket.printCount) ? Number(ticket.printCount) : 0,
   qrCodeUrl: ticket.qrCodeUrl || null,
   scannedAt: ticket.scannedAt || null,
   cancelledAt: ticket.cancelledAt || null,
   createdAt: ticket.createdAt || null
 });
 
-const listBookings = async ({ page, limit, bookedBy, dateFrom, dateTo }) => {
-  const { page: safePage, limit: safeLimit, skip } = resolvePagination(
-    page,
-    limit
-  );
-
+const buildBookingsQuery = ({
+  bookedBy,
+  dateFrom,
+  dateTo,
+  paymentMethod,
+  paymentStatus,
+  bookingSource,
+  status,
+} = {}) => {
   const query = {};
   const createdAtFilter = buildBookingsDateFilter({ dateFrom, dateTo });
   if (bookedBy) {
@@ -589,13 +594,27 @@ const listBookings = async ({ page, limit, bookedBy, dateFrom, dateTo }) => {
   if (createdAtFilter) {
     query.createdAt = createdAtFilter;
   }
+  if (paymentMethod) {
+    query.paymentMethod = String(paymentMethod);
+  }
+  if (paymentStatus) {
+    query.paymentStatus = String(paymentStatus);
+  }
+  if (bookingSource) {
+    query.bookingSource = String(bookingSource);
+  }
+  if (status) {
+    query.status = String(status);
+  }
 
-  const [total, bookings] = await Promise.all([
-  Booking.countDocuments(query),
+  return query;
+};
+
+const buildBookingsFindQuery = (query, { skip = 0, limit = 200 } = {}) =>
   Booking.find(query).
   sort({ createdAt: -1 }).
   skip(skip).
-  limit(safeLimit).
+  limit(limit).
   select(
     "bookingNumber sessionId userId customerContact seats totalAmount paymentMethod paymentStatus promotion bookedBy bookingSource status subscriptionTransaction printCount createdAt"
   ).
@@ -606,7 +625,37 @@ const listBookings = async ({ page, limit, bookedBy, dateFrom, dateTo }) => {
     select: "date sessionTime roomId eventId",
     populate: { path: "eventId", select: "name" }
   }).
-  lean()]
+  lean();
+
+const listBookings = async ({
+  page,
+  limit,
+  bookedBy,
+  dateFrom,
+  dateTo,
+  paymentMethod,
+  paymentStatus,
+  bookingSource,
+  status,
+}) => {
+  const { page: safePage, limit: safeLimit, skip } = resolvePagination(
+    page,
+    limit
+  );
+
+  const query = buildBookingsQuery({
+    bookedBy,
+    dateFrom,
+    dateTo,
+    paymentMethod,
+    paymentStatus,
+    bookingSource,
+    status,
+  });
+
+  const [total, bookings] = await Promise.all([
+  Booking.countDocuments(query),
+  buildBookingsFindQuery(query, { skip, limit: safeLimit })]
   );
 
   return {
@@ -615,6 +664,28 @@ const listBookings = async ({ page, limit, bookedBy, dateFrom, dateTo }) => {
     page: safePage,
     limit: safeLimit
   };
+};
+
+const listBookingsForExport = async ({
+  bookedBy,
+  dateFrom,
+  dateTo,
+  paymentMethod,
+  paymentStatus,
+  bookingSource,
+  status,
+} = {}) => {
+  const query = buildBookingsQuery({
+    bookedBy,
+    dateFrom,
+    dateTo,
+    paymentMethod,
+    paymentStatus,
+    bookingSource,
+    status,
+  });
+  const bookings = await buildBookingsFindQuery(query, { skip: 0, limit: 5000 });
+  return bookings.map(serializeBooking);
 };
 
 const listBookingsForUser = async ({ userId, page, limit, dateFrom, dateTo }) => {
@@ -676,7 +747,7 @@ const getBookingById = async ({ bookingId, requesterId, requesterRole }) => {
   const tickets = await Ticket.find({ bookingId: booking._id }).
   sort({ "seat.row": 1, "seat.col": 1, createdAt: 1 }).
   select(
-    "code status isScanned seat pricingName price qrCodeUrl scannedAt cancelledAt createdAt"
+    "code status isScanned seat pricingName price printCount qrCodeUrl scannedAt cancelledAt createdAt"
   ).
   lean();
 
@@ -982,6 +1053,7 @@ const cancelBookingTickets = async ({
           seat: ticket.seat || null,
           pricingName: ticket.pricingName || "",
           price: ticket.price,
+          printCount: Number.isFinite(ticket.printCount) ? Number(ticket.printCount) : 0,
         })),
         cancelledTicketsCount: ticketsToCancel.length,
         cancelledGrossAmount,
@@ -1114,6 +1186,15 @@ const createBooking = async ({ payload, userId, userRole, io }) => {
       });
 
       const now = new Date();
+
+      if (isGuestFlow && normalizedCustomerContact) {
+        await guestService.updateGuestContact({
+          guestId: userId,
+          contact: normalizedCustomerContact,
+          dbSession
+        });
+      }
+
       const session = await Session.findById(sessionId).
       select(
         "roomId overrides pricingOverrides eventId date sessionTime version pricingLimits"
@@ -1429,7 +1510,7 @@ const createBooking = async ({ payload, userId, userRole, io }) => {
       let bookingCustomerId = isCustomerFlow ?
       userId :
       isGuestFlow ?
-      null :
+      userId :
       customerId && mongoose.isValidObjectId(customerId) ?
       customerId :
       null;
@@ -1560,6 +1641,15 @@ const createBooking = async ({ payload, userId, userRole, io }) => {
           new Date(linkedSubscription.expirationDate).getTime() < now.getTime())
           {
             const error = new Error("Cet abonnement est expiré.");
+            error.status = 409;
+            throw error;
+          }
+
+          if (
+          subscriptionSale.expiresAt &&
+          new Date(subscriptionSale.expiresAt).getTime() < now.getTime())
+          {
+            const error = new Error("Votre abonnement a expiré.");
             error.status = 409;
             throw error;
           }
@@ -1812,6 +1902,11 @@ const incrementPrintCount = async (bookingId) => {
     throw new Error("Booking not found");
   }
 
+  await Ticket.updateMany(
+    { bookingId: booking._id, status: { $ne: "cancelled" } },
+    { $inc: { printCount: 1 } },
+  );
+
   await auditLogService.log({
     action: "BOOKING_PRINTED",
     targetType: "booking",
@@ -1841,6 +1936,7 @@ module.exports = {
   createBooking,
   getBookingById,
   listBookings,
+  listBookingsForExport,
   listBookingsForUser,
   incrementPrintCount,
   logPrintCancelled

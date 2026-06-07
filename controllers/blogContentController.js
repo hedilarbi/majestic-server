@@ -18,7 +18,10 @@ const createBlogContent = async (req, res) => {
 
 const listBlogContents = async (req, res) => {
   try {
-    const items = await blogContentService.listBlogContents(req.query || {});
+    const items = await blogContentService.listBlogContents({
+      ...(req.query || {}),
+      types: req.allowedBlogContentTypes,
+    });
     return res.status(200).json({ items });
   } catch (error) {
     return res

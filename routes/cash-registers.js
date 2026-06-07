@@ -8,7 +8,9 @@ const {
   getHistoryDetails,
   getOwnTicketOfficeDetails,
   getTicketOfficeDetails,
+  exportSupervisorCashierHistory,
   listCashierOverview,
+  listSupervisorCashierHistory,
   listHistory,
   listOverview,
 } = require("../controllers/cashRegisterController");
@@ -35,6 +37,16 @@ const requireCashRegisterPermission = (action) => (req, res, next) =>
   });
 
 router.get("/cashiers", requireCashRegisterPermission("list"), listCashierOverview);
+router.get(
+  "/cashiers/history",
+  requireCashRegisterPermission("list"),
+  listSupervisorCashierHistory,
+);
+router.get(
+  "/cashiers/history/export/:format",
+  requireCashRegisterPermission("list"),
+  exportSupervisorCashierHistory,
+);
 router.get(
   "/cashiers/:cashierId",
   requireCashRegisterPermission("list"),

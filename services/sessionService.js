@@ -226,6 +226,12 @@ const normalizePayload = (payload) => {
   if (Object.prototype.hasOwnProperty.call(payload, "status")) {
     data.status = payload.status;
   }
+  if (Object.prototype.hasOwnProperty.call(payload, "sessionType")) {
+    const validTypes = ["normale", "projection_debat", "avant_premiere", "premiere"];
+    if (validTypes.includes(payload.sessionType)) {
+      data.sessionType = payload.sessionType;
+    }
+  }
 
   return data;
 };

@@ -4,6 +4,38 @@ const mongoose = require("mongoose");
 const User = require("../models/User");
 
 const GUEST_ROLE = "guest";
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const normalizeText = (value) =>
+  typeof value === "string" ? value.trim() : "";
+
+const normalizeEmail = (value) => {
+  const email = normalizeText(value).toLowerCase();
+  return EMAIL_REGEX.test(email) ? email : "";
+};
+
+const normalizeGuestContact = (value = {}) => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const firstName = normalizeText(value.firstName || value.prenom);
+  const lastName = normalizeText(value.lastName || value.nom);
+  const email = normalizeEmail(value.email);
+
+  if (!firstName && !lastName && !email) {
+    return null;
+  }
+
+  return {
+    firstName,
+    lastName,
+    email,
+  };
+};
+
+const buildGuestEmail = () =>
+  `guest.${new mongoose.Types.ObjectId().toString()}@guest.local`;
 
 const buildToken = (user) => {
   const secret = process.env.JWT_SECRET;
@@ -33,15 +65,25 @@ const sanitizeUser = (user) => {
 
   const data = user.toObject({ versionKey: false });
   delete data.password;
+
+  if (data.role === GUEST_ROLE && data.guestContact) {
+    data.firstName = data.firstName || data.guestContact.firstName || "";
+    data.lastName = data.lastName || data.guestContact.lastName || "";
+    data.email = data.guestContact.email || data.email || "";
+  }
+
   return data;
 };
 
-const createGuest = async () => {
+const createGuest = async (contactPayload = {}) => {
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-  const uniqueGuestEmail = `guest.${new mongoose.Types.ObjectId().toString()}@guest.local`;
+  const contact = normalizeGuestContact(contactPayload);
   const user = await User.create({
-    email: uniqueGuestEmail,
+    email: buildGuestEmail(),
+    firstName: contact?.firstName || "",
+    lastName: contact?.lastName || "",
+    guestContact: contact || undefined,
     role: GUEST_ROLE,
     status: "active",
     lastSeenAt: now,
@@ -51,6 +93,45 @@ const createGuest = async () => {
   const token = buildToken(user);
 
   return { token, user: sanitizeUser(user) };
+};
+
+const updateGuestContact = async ({ guestId, contact, dbSession } = {}) => {
+  if (!guestId || !mongoose.isValidObjectId(guestId)) {
+    return null;
+  }
+
+  const normalizedContact = normalizeGuestContact(contact);
+  if (!normalizedContact) {
+    return null;
+  }
+
+  const update = {
+    lastSeenAt: new Date(),
+    "guestContact.firstName": normalizedContact.firstName,
+    "guestContact.lastName": normalizedContact.lastName,
+    "guestContact.email": normalizedContact.email,
+  };
+
+  if (normalizedContact.firstName) {
+    update.firstName = normalizedContact.firstName;
+  }
+
+  if (normalizedContact.lastName) {
+    update.lastName = normalizedContact.lastName;
+  }
+
+  const query = User.findOneAndUpdate(
+    { _id: guestId, role: GUEST_ROLE },
+    { $set: update },
+    { new: true, runValidators: true },
+  );
+
+  if (dbSession) {
+    query.session(dbSession);
+  }
+
+  const user = await query;
+  return sanitizeUser(user);
 };
 
 const getGuestById = async (id) => {
@@ -85,4 +166,5 @@ const getGuestById = async (id) => {
 module.exports = {
   createGuest,
   getGuestById,
+  updateGuestContact,
 };

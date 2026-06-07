@@ -209,6 +209,7 @@ const serializeSubscriptionSale = (sale) => ({
   status: sale.status || "",
   source: sale.source || "",
   createdAt: sale.createdAt || null,
+  expiresAt: sale.expiresAt || null,
   // Flat fields for easy access in checkout dropdown
   allowedSeatType: sale.subscriptionId?.allowedSeatType || "normale",
   maxSeatsPerSession: Number.isFinite(sale.subscriptionId?.maxSeatsPerSession)
@@ -346,7 +347,7 @@ const listCustomerSubscriptionSales = async ({ tokenPayload, page, limit }) => {
       .skip(skip)
       .limit(safeLimit)
       .select(
-        "subscriptionId subscriptionCode customerContact price totalCredits usedCredits remainingCredits paymentMethod paymentStatus status source createdAt",
+        "subscriptionId subscriptionCode customerContact price totalCredits usedCredits remainingCredits paymentMethod paymentStatus status source expiresAt createdAt",
       )
       .populate({
         path: "subscriptionId",
@@ -377,7 +378,7 @@ const getCustomerSubscriptionSaleById = async ({ tokenPayload, saleId }) => {
     ...buildSubscriptionSaleQuery(customer),
   })
     .select(
-      "subscriptionId subscriptionCode customerContact price totalCredits usedCredits remainingCredits paymentMethod paymentStatus status source createdAt",
+      "subscriptionId subscriptionCode customerContact price totalCredits usedCredits remainingCredits paymentMethod paymentStatus status source expiresAt createdAt",
     )
     .populate({
       path: "subscriptionId",
@@ -418,7 +419,7 @@ const listCustomerPayments = async ({ tokenPayload, page, limit }) => {
     SubscriptionSale.find(buildSubscriptionSaleQuery(customer))
       .sort({ createdAt: -1 })
       .select(
-        "subscriptionId subscriptionCode customerContact price totalCredits usedCredits remainingCredits paymentMethod paymentStatus status source createdAt",
+        "subscriptionId subscriptionCode customerContact price totalCredits usedCredits remainingCredits paymentMethod paymentStatus status source expiresAt createdAt",
       )
       .populate({
         path: "subscriptionId",

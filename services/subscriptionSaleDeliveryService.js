@@ -5,6 +5,7 @@ const SubscriptionSale = require("../models/SubscriptionSale");
 
 let cachedTransporter = null;
 let cachedNodemailer = null;
+let cachedQrCode = null;
 let cachedLogoAttachment = undefined;
 
 const queue = [];
@@ -12,6 +13,7 @@ let queueProcessing = false;
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const LOGO_CID = "majestic-logo";
+const SUBSCRIPTION_QR_CID = "subscription-qr";
 
 const normalizeText = (value) => (typeof value === "string" ? value.trim() : "");
 
@@ -49,6 +51,14 @@ const getNodemailer = () => {
   }
   cachedNodemailer = require("nodemailer");
   return cachedNodemailer;
+};
+
+const getQrCode = () => {
+  if (cachedQrCode) {
+    return cachedQrCode;
+  }
+  cachedQrCode = require("qrcode");
+  return cachedQrCode;
 };
 
 const getLogoAttachment = () => {
@@ -159,6 +169,28 @@ const formatCurrency = (value) => {
   return `${safeAmount.toFixed(2)} DT`;
 };
 
+const buildSubscriptionQrAttachment = async (code) => {
+  const payload = normalizeText(code);
+  if (!payload || payload === "N/A") {
+    return null;
+  }
+
+  const QRCode = getQrCode();
+  const content = await QRCode.toBuffer(payload, {
+    type: "png",
+    width: 220,
+    margin: 1,
+    errorCorrectionLevel: "M",
+  });
+
+  return {
+    filename: "abonnement-qr.png",
+    content,
+    cid: SUBSCRIPTION_QR_CID,
+    contentType: "image/png",
+  };
+};
+
 const resolveRecipient = (sale) => {
   const user = sale?.userId && typeof sale.userId === "object" ? sale.userId : null;
   const contact =
@@ -219,6 +251,13 @@ const buildEmailHtml = ({ sale, subscription, customerName, hasLogo }) => {
               <div style="font-size:30px;line-height:1.2;font-weight:700;color:#ffffff;word-break:break-word;">
                 ${code}
               </div>
+              ${
+                code && code !== "N/A"
+                  ? `<div style="margin-top:18px;">
+                      <img src="cid:${SUBSCRIPTION_QR_CID}" alt="QR code abonnement" style="display:block;width:132px;height:132px;margin:0 auto;padding:8px;border-radius:14px;background:#ffffff;" />
+                    </div>`
+                  : ""
+              }
             </div>
 
             <div style="border-radius:18px;background:#0f172a;border:1px solid rgba(148,163,184,0.16);padding:18px 20px;">
@@ -304,6 +343,7 @@ const sendSubscriptionSaleEmail = async ({ saleId }) => {
   }
 
   const logoAttachment = getLogoAttachment();
+  const qrAttachment = await buildSubscriptionQrAttachment(sale.subscriptionCode);
   const html = buildEmailHtml({
     sale,
     subscription: sale.subscriptionId,
@@ -311,7 +351,7 @@ const sendSubscriptionSaleEmail = async ({ saleId }) => {
     hasLogo: Boolean(logoAttachment),
   });
 
-  const attachments = logoAttachment ? [logoAttachment] : [];
+  const attachments = [logoAttachment, qrAttachment].filter(Boolean);
 
   await transporter.sendMail({
     from: fromAddress,

@@ -201,6 +201,21 @@ const formatCurrency = (value) => {
   return `${safeAmount.toFixed(2)} DT`;
 };
 
+const isPdfKitSupportedImage = (buffer) => {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 4) {
+    return false;
+  }
+
+  const isPng =
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47;
+  const isJpeg = buffer[0] === 0xff && buffer[1] === 0xd8;
+
+  return isPng || isJpeg;
+};
+
 const resolvePosterSource = (session) => {
   const event =
     session?.eventId && typeof session.eventId === "object" ? session.eventId : null;
@@ -227,7 +242,8 @@ const fetchImageBuffer = async (source) => {
       }
 
       const arrayBuffer = await response.arrayBuffer();
-      return Buffer.from(arrayBuffer);
+      const buffer = Buffer.from(arrayBuffer);
+      return isPdfKitSupportedImage(buffer) ? buffer : null;
     }
 
     const directPath = path.isAbsolute(safeSource)
@@ -235,7 +251,8 @@ const fetchImageBuffer = async (source) => {
       : path.resolve(process.cwd(), safeSource);
 
     if (fs.existsSync(directPath)) {
-      return fs.readFileSync(directPath);
+      const buffer = fs.readFileSync(directPath);
+      return isPdfKitSupportedImage(buffer) ? buffer : null;
     }
   } catch (_error) {
     return null;
@@ -357,16 +374,25 @@ const renderTicketPdfPage = ({
     .rect(leftX + leftWidth - 20, cardY, 20, cardHeight)
     .fill("#0d1e3d");
 
-  if (posterBuffer) {
+  if (isPdfKitSupportedImage(posterBuffer)) {
     doc.save();
     doc.roundedRect(posterX, posterY, posterWidth, posterHeight, 14).clip();
-    doc.image(posterBuffer, posterX, posterY, {
-      fit: [posterWidth, posterHeight],
-      align: "center",
-      valign: "center",
-    });
-    doc.restore();
-  } else {
+    try {
+      doc.image(posterBuffer, posterX, posterY, {
+        fit: [posterWidth, posterHeight],
+        align: "center",
+        valign: "center",
+      });
+    } catch (_error) {
+      doc.restore();
+      posterBuffer = null;
+    }
+    if (posterBuffer) {
+      doc.restore();
+    }
+  }
+
+  if (!isPdfKitSupportedImage(posterBuffer)) {
     const fallbackGradient = doc.linearGradient(
       posterX,
       posterY,

@@ -99,6 +99,28 @@ const buildPricingBreakdown = (tickets = []) => {
   return Array.from(groups.values());
 };
 
+const serializeAuditTicket = ({ ticketId, ticket, fallback = {} }) => {
+  const id = ticketId ? String(ticketId) : ticket?._id ? String(ticket._id) : "";
+  const seat = ticket?.seat || fallback.seat || null;
+
+  return {
+    id,
+    code: normalizeText(ticket?.code) || normalizeText(fallback.code),
+    seat,
+    seatLabel: buildSeatLabel(ticket || fallback) || normalizeText(fallback.seatLabel),
+    pricingName: normalizeText(ticket?.pricingName) || normalizeText(fallback.pricingName),
+    price: Number.isFinite(ticket?.price)
+      ? Number(ticket.price)
+      : Number.isFinite(fallback.price)
+        ? Number(fallback.price)
+        : 0,
+    status: normalizeText(ticket?.status) || normalizeText(fallback.status),
+    printCount: Number.isFinite(ticket?.printCount) ? Number(ticket.printCount) : 0,
+    cancelledAt: ticket?.cancelledAt || fallback.cancelledAt || null,
+    createdAt: ticket?.createdAt || fallback.createdAt || null,
+  };
+};
+
 const resolveActorSnapshot = async ({ actorId, actorRole }) => {
   const normalizedRole = normalizeText(actorRole);
 
@@ -176,32 +198,54 @@ const normalizeActionType = (value) => {
     : "";
 };
 
-const serializeAuditLog = (item) => ({
-  id: item._id ? String(item._id) : null,
-  actionType: item.actionType || "",
-  createdAt: item.createdAt || null,
-  actor: {
-    id: item.actorId ? String(item.actorId) : null,
-    name: item.actorSnapshot?.name || "",
-    email: item.actorSnapshot?.email || "",
-    role: item.actorSnapshot?.role || "",
-  },
-  booking: {
-    id: item.bookingId ? String(item.bookingId) : null,
-    bookingNumber: item.bookingNumber || "",
-  },
-  session: {
-    id: item.sessionId ? String(item.sessionId) : null,
-    eventName: item.eventName || "",
-    date: item.sessionDate || null,
-    sessionTime: item.sessionTime || "",
-  },
-  ticketsCount: Number.isFinite(item.ticketsCount) ? Number(item.ticketsCount) : 0,
-  ticketCodes: Array.isArray(item.ticketCodes) ? item.ticketCodes : [],
-  seatLabels: Array.isArray(item.seatLabels) ? item.seatLabels : [],
-  pricingBreakdown: Array.isArray(item.pricingBreakdown) ? item.pricingBreakdown : [],
-  details: item.details && typeof item.details === "object" ? item.details : {},
-});
+const serializeAuditLog = (item, ticketsById = new Map()) => {
+  const ticketIds = Array.isArray(item.ticketIds) ? item.ticketIds : [];
+  const ticketCodes = Array.isArray(item.ticketCodes) ? item.ticketCodes : [];
+  const seatLabels = Array.isArray(item.seatLabels) ? item.seatLabels : [];
+  const pricingBreakdown = Array.isArray(item.pricingBreakdown)
+    ? item.pricingBreakdown
+    : [];
+
+  return {
+    id: item._id ? String(item._id) : null,
+    actionType: item.actionType || "",
+    createdAt: item.createdAt || null,
+    actor: {
+      id: item.actorId ? String(item.actorId) : null,
+      name: item.actorSnapshot?.name || "",
+      email: item.actorSnapshot?.email || "",
+      role: item.actorSnapshot?.role || "",
+    },
+    booking: {
+      id: item.bookingId ? String(item.bookingId) : null,
+      bookingNumber: item.bookingNumber || "",
+    },
+    session: {
+      id: item.sessionId ? String(item.sessionId) : null,
+      eventName: item.eventName || "",
+      date: item.sessionDate || null,
+      sessionTime: item.sessionTime || "",
+    },
+    ticketsCount: Number.isFinite(item.ticketsCount) ? Number(item.ticketsCount) : 0,
+    ticketCodes,
+    seatLabels,
+    pricingBreakdown,
+    tickets: ticketIds.map((ticketId, index) => {
+      const normalizedTicketId = ticketId ? String(ticketId) : "";
+      return serializeAuditTicket({
+        ticketId: normalizedTicketId,
+        ticket: ticketsById.get(normalizedTicketId),
+        fallback: {
+          code: ticketCodes[index] || "",
+          seatLabel: seatLabels[index] || "",
+          pricingName: pricingBreakdown[index]?.name || "",
+          price: pricingBreakdown[index]?.unitPrice || 0,
+        },
+      });
+    }),
+    details: item.details && typeof item.details === "object" ? item.details : {},
+  };
+};
 
 const createAuditLog = async ({
   actionType,
@@ -275,9 +319,15 @@ const recordTicketCancellation = async ({
   });
 };
 
-const recordTicketPrint = async ({ bookingId, actorId, actorRole }) => {
+const recordTicketPrint = async ({ bookingId, ticketId, actorId, actorRole }) => {
   if (!bookingId || !mongoose.isValidObjectId(bookingId)) {
     const error = new Error("Booking invalide.");
+    error.status = 400;
+    throw error;
+  }
+
+  if (ticketId && !mongoose.isValidObjectId(ticketId)) {
+    const error = new Error("Billet invalide.");
     error.status = 400;
     throw error;
   }
@@ -301,7 +351,7 @@ const recordTicketPrint = async ({ bookingId, actorId, actorRole }) => {
   }
 
   const booking = await Booking.findOne(bookingQuery)
-    .select("bookingNumber sessionId bookedBy")
+    .select("bookingNumber sessionId bookedBy printCount")
     .lean();
 
   if (!booking) {
@@ -310,43 +360,84 @@ const recordTicketPrint = async ({ bookingId, actorId, actorRole }) => {
     throw error;
   }
 
-  const tickets = await Ticket.find({
+  const ticketQuery = {
     bookingId: booking._id,
     status: { $ne: "cancelled" },
-  })
+  };
+  if (ticketId) {
+    ticketQuery._id = ticketId;
+  }
+
+  const tickets = await Ticket.find(ticketQuery)
     .sort({ createdAt: 1, "seat.row": 1, "seat.col": 1 })
-    .select("code seat pricingName price")
+    .select("code seat pricingName price printCount")
     .lean();
 
   if (!tickets.length) {
-    const error = new Error("Aucun billet à imprimer.");
+    const error = new Error(ticketId ? "Billet introuvable ou annulé." : "Aucun billet à imprimer.");
     error.status = 409;
     throw error;
   }
 
-  await Booking.updateOne(
-    { _id: booking._id },
+  const updatedBooking = await Booking.findByIdAndUpdate(
+    booking._id,
+    { $inc: { printCount: 1 } },
+    { new: true, projection: "printCount" },
+  ).lean();
+
+  const printCount = Number.isFinite(updatedBooking?.printCount)
+    ? Number(updatedBooking.printCount)
+    : (Number.isFinite(booking.printCount) ? Number(booking.printCount) : 0) + 1;
+
+  const ticketIds = tickets.map((ticket) => ticket._id).filter(Boolean);
+  await Ticket.updateMany(
+    { _id: { $in: ticketIds } },
     { $inc: { printCount: 1 } },
   );
 
-  return createAuditLog({
+  const updatedTickets = await Ticket.find({ _id: { $in: ticketIds } })
+    .sort({ createdAt: 1, "seat.row": 1, "seat.col": 1 })
+    .select("code seat pricingName price printCount status cancelledAt createdAt")
+    .lean();
+  const ticketPrints = updatedTickets.map((ticket) => ({
+    ticketId: ticket?._id ? String(ticket._id) : "",
+    code: ticket?.code || "",
+    seatLabel: buildSeatLabel(ticket),
+    printCount: Number.isFinite(ticket?.printCount) ? Number(ticket.printCount) : 0,
+  }));
+  const hasRepeatedTicketPrint = ticketPrints.some(
+    (ticket) => ticket.printCount > 1,
+  );
+
+  const auditLog = await createAuditLog({
     actionType: "ticket_print",
     actorId,
     actorRole: normalizedRole,
     bookingId: booking._id,
     bookingNumber: booking.bookingNumber || "",
     sessionId: booking.sessionId,
-    tickets,
+    tickets: updatedTickets,
     details: {
-      printedTicketsCount: tickets.length,
-      printCount: (booking.printCount || 0) + 1,
+      printedTicketsCount: updatedTickets.length,
+      printCount,
+      printScope: ticketId ? "ticket" : "booking",
+      ticketPrints,
+      hasRepeatedTicketPrint,
     },
   });
+
+  return { auditLog, printCount };
 };
 
-const recordTicketPrintCancelled = async ({ bookingId, actorId, actorRole }) => {
+const recordTicketPrintCancelled = async ({ bookingId, ticketId, actorId, actorRole }) => {
   if (!bookingId || !mongoose.isValidObjectId(bookingId)) {
     const error = new Error("Booking invalide.");
+    error.status = 400;
+    throw error;
+  }
+
+  if (ticketId && !mongoose.isValidObjectId(ticketId)) {
+    const error = new Error("Billet invalide.");
     error.status = 400;
     throw error;
   }
@@ -358,8 +449,19 @@ const recordTicketPrintCancelled = async ({ bookingId, actorId, actorRole }) => 
     throw error;
   }
 
-  const booking = await Booking.findById(bookingId)
-    .select("bookingNumber sessionId printCount")
+  const bookingQuery = { _id: bookingId };
+  if (normalizedRole === "ticket_office") {
+    if (!actorId || !mongoose.isValidObjectId(actorId)) {
+      const error = new Error("Utilisateur invalide.");
+      error.status = 401;
+      throw error;
+    }
+
+    bookingQuery.bookedBy = actorId;
+  }
+
+  const booking = await Booking.findOne(bookingQuery)
+    .select("bookingNumber sessionId printCount bookedBy")
     .lean();
 
   if (!booking) {
@@ -368,21 +470,30 @@ const recordTicketPrintCancelled = async ({ bookingId, actorId, actorRole }) => 
     throw error;
   }
 
-  return createAuditLog({
+  const ticket = ticketId
+    ? await Ticket.findOne({ _id: ticketId, bookingId: booking._id })
+        .select("code seat pricingName price printCount status cancelledAt createdAt")
+        .lean()
+    : null;
+
+  const auditLog = await createAuditLog({
     actionType: "ticket_print_cancelled",
     actorId,
     actorRole: normalizedRole,
     bookingId: booking._id,
     bookingNumber: booking.bookingNumber || "",
     sessionId: booking.sessionId,
-    tickets: [],
+    tickets: ticket ? [ticket] : [],
     details: {
       printCount: booking.printCount || 0,
+      printScope: ticketId ? "ticket" : "booking",
     },
   });
+
+  return { auditLog };
 };
 
-const listAuditLogs = async ({ page, limit, type, dateFrom, dateTo, requester }) => {
+const listAuditLogs = async ({ page, limit, type, view, dateFrom, dateTo, requester }) => {
   if (!requester || !hasDashboardPermission(requester, "audit_logs", "list")) {
     const error = new Error("Permission insuffisante");
     error.status = 403;
@@ -395,8 +506,23 @@ const listAuditLogs = async ({ page, limit, type, dateFrom, dateTo, requester })
 
   const query = {};
   const actionType = normalizeActionType(type);
+  const normalizedView = normalizeText(view).toLowerCase();
   if (actionType) {
     query.actionType = actionType;
+  }
+
+  if (normalizedView === "ticket_tracking") {
+    if (actionType === "ticket_print") {
+      query["details.hasRepeatedTicketPrint"] = true;
+    } else if (!actionType) {
+      query.$or = [
+        { actionType: "ticket_cancellation" },
+        {
+          actionType: "ticket_print",
+          "details.hasRepeatedTicketPrint": true,
+        },
+      ];
+    }
   }
 
   const createdAtRange = buildDateRange({ dateFrom, dateTo });
@@ -409,8 +535,28 @@ const listAuditLogs = async ({ page, limit, type, dateFrom, dateTo, requester })
     AuditLog.find(query).sort({ createdAt: -1 }).skip(skip).limit(safeLimit).lean(),
   ]);
 
+  const ticketIds = Array.from(
+    new Set(
+      items
+        .flatMap((item) => (Array.isArray(item.ticketIds) ? item.ticketIds : []))
+        .map((ticketId) => String(ticketId || ""))
+        .filter(Boolean),
+    ),
+  );
+  const tickets = ticketIds.length
+    ? await Ticket.find({ _id: { $in: ticketIds } })
+        .select("code seat pricingName price printCount status cancelledAt createdAt")
+        .lean()
+    : [];
+  const ticketsById = tickets.reduce((accumulator, ticket) => {
+    if (ticket?._id) {
+      accumulator.set(String(ticket._id), ticket);
+    }
+    return accumulator;
+  }, new Map());
+
   return {
-    items: items.map(serializeAuditLog),
+    items: items.map((item) => serializeAuditLog(item, ticketsById)),
     total,
     page: safePage,
     limit: safeLimit,

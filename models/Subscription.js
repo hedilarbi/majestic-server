@@ -25,6 +25,10 @@ const subscriptionSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    validityDays: {
+      type: Number,
+      min: 1,
+    },
     isActive: {
       type: Boolean,
       default: true,

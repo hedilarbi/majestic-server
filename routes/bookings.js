@@ -2,6 +2,7 @@ const express = require("express");
 const {
   cancelBookingTickets,
   createBooking,
+  exportBookings,
   getBookingById,
   listBookings,
   listMyBookings,
@@ -13,6 +14,7 @@ const router = express.Router();
 router.post("/", authenticate, createBooking);
 router.get("/", authenticate, listBookings);
 router.get("/me", authenticate, listMyBookings);
+router.get("/export/:format", authenticate, exportBookings);
 router.post("/:bookingId/cancel", authenticate, cancelBookingTickets);
 router.post("/:bookingId/print", authenticate, (req, res) => {
   const { trackPrint } = require("../controllers/bookingController");

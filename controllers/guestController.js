@@ -2,7 +2,7 @@ const guestService = require("../services/guestService");
 
 const createGuest = async (req, res) => {
   try {
-    const result = await guestService.createGuest();
+    const result = await guestService.createGuest(req.body || {});
     return res.status(201).json(result);
   } catch (error) {
     const status = error.status || 500;

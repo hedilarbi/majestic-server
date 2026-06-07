@@ -74,7 +74,7 @@ const getSeatMap = async (sessionId, currentUserId) => {
     status: { $in: ["confirmed", "used"] }
   }).select("seats"),
   SeatLock.find({ sessionId, expiresAt: { $gt: now } }).select(
-    "row col reservedBy"
+    "row col reservedBy expiresAt"
   ),
   SeatReservation.find({
     sessionId,
@@ -102,6 +102,7 @@ const getSeatMap = async (sessionId, currentUserId) => {
 
   let myReservation = null;
   if (currentUserIdString) {
+    // Check SeatReservations (checkout flow)
     const myReservations = seatReservations.
     filter((reservation) => String(reservation.userId) === currentUserIdString).
     sort((a, b) => {
@@ -121,6 +122,27 @@ const getSeatMap = async (sessionId, currentUserId) => {
         expiresAt: primaryReservation.expiresAt,
         seats: mergedSeats
       };
+    } else {
+      // Fallback: check SeatLocks (seat selection flow) — user refreshed before checkout
+      const myLocks = seatLocks.filter(
+        (lock) => lock.reservedBy && String(lock.reservedBy) === currentUserIdString
+      );
+
+      if (myLocks.length > 0) {
+        const seats = mergeUniqueSeats(
+          myLocks.map((lock) => ({ row: lock.row, col: lock.col }))
+        );
+        const latestExpiry = myLocks.reduce((max, lock) => {
+          const t = lock.expiresAt ? new Date(lock.expiresAt).getTime() : 0;
+          return t > max ? t : max;
+        }, 0);
+
+        myReservation = {
+          reservationId: `lock-${currentUserIdString}`,
+          expiresAt: latestExpiry ? new Date(latestExpiry) : null,
+          seats
+        };
+      }
     }
   }
 

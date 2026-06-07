@@ -32,6 +32,8 @@ const statisticsRoutes = require("./routes/statistics");
 const dashboardNotificationRoutes = require("./routes/dashboard-notifications");
 const auditLogRoutes = require("./routes/audit-logs");
 const paymentRoutes = require("./routes/payments");
+const partnerRoutes = require("./routes/partners");
+const searchRoutes = require("./routes/search");
 
 require("dotenv/config");
 
@@ -102,6 +104,8 @@ app.use("/statistics", statisticsRoutes);
 app.use("/dashboard-notifications", dashboardNotificationRoutes);
 app.use("/audit-logs", auditLogRoutes);
 app.use("/payments", paymentRoutes);
+app.use("/partners", partnerRoutes);
+app.use("/search", searchRoutes);
 
 mongoose
   .connect(process.env.DB_CONNECTION)

@@ -27,6 +27,9 @@ const createSubscription = async ({
   expirationDate,
   description,
   isActive,
+  validityDays,
+  allowedSeatType,
+  maxSeatsPerSession,
 }) => {
   if (!name || !name.trim()) {
     const error = new Error(
@@ -58,6 +61,7 @@ const createSubscription = async ({
     throw error;
   }
 
+  const normalizedValidityDays = normalizeNumber(validityDays);
   const subscription = await Subscription.create({
     name,
     price: normalizedPrice,
@@ -65,6 +69,9 @@ const createSubscription = async ({
     expirationDate: normalizedExpiration,
     description,
     isActive,
+    ...(Number.isFinite(normalizedValidityDays) && normalizedValidityDays > 0 ? { validityDays: normalizedValidityDays } : {}),
+    ...(allowedSeatType ? { allowedSeatType } : {}),
+    ...(Number.isFinite(normalizeNumber(maxSeatsPerSession)) ? { maxSeatsPerSession: normalizeNumber(maxSeatsPerSession) } : {}),
   });
 
   return subscription;
@@ -116,6 +123,16 @@ const updateSubscription = async (id, updates) => {
   }
   if (updates && Object.prototype.hasOwnProperty.call(updates, "isActive")) {
     updateData.isActive = updates.isActive;
+  }
+  if (updates && Object.prototype.hasOwnProperty.call(updates, "allowedSeatType")) {
+    updateData.allowedSeatType = updates.allowedSeatType;
+  }
+  if (updates && Object.prototype.hasOwnProperty.call(updates, "maxSeatsPerSession")) {
+    updateData.maxSeatsPerSession = normalizeNumber(updates.maxSeatsPerSession);
+  }
+  if (updates && Object.prototype.hasOwnProperty.call(updates, "validityDays")) {
+    const days = normalizeNumber(updates.validityDays);
+    updateData.validityDays = days === "" || days === null ? undefined : days;
   }
 
   if (

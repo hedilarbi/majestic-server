@@ -153,19 +153,72 @@ const serializeScanTicket = (ticket) => ({
   cancelledAt: ticket.cancelledAt || null
 });
 
-const listTickets = async ({ page, limit }) => {
-  const { page: safePage, limit: safeLimit, skip } = resolvePagination(
-    page,
-    limit
-  );
+const parseDateFilter = (value, label, boundary) => {
+  if (!value) {
+    return null;
+  }
 
+  const normalizedValue = String(value).trim();
+  if (!normalizedValue) {
+    return null;
+  }
+
+  const parsed = new Date(normalizedValue);
+  if (Number.isNaN(parsed.getTime())) {
+    const error = new Error(`${label} invalide`);
+    error.status = 400;
+    throw error;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalizedValue)) {
+    if (boundary === "end") {
+      parsed.setHours(23, 59, 59, 999);
+    } else {
+      parsed.setHours(0, 0, 0, 0);
+    }
+  }
+
+  return parsed;
+};
+
+const buildTicketsQuery = ({ dateFrom, dateTo, status, pricingName } = {}) => {
   const query = {};
-  const [total, tickets] = await Promise.all([
-  Ticket.countDocuments(query),
+  const from = parseDateFilter(dateFrom, "dateFrom", "start");
+  const to = parseDateFilter(dateTo, "dateTo", "end");
+
+  if (from && to && from.getTime() > to.getTime()) {
+    const error = new Error("dateFrom doit être antérieure à dateTo");
+    error.status = 400;
+    throw error;
+  }
+  if (from || to) {
+    query.createdAt = {
+      ...(from ? { $gte: from } : {}),
+      ...(to ? { $lte: to } : {}),
+    };
+  }
+  if (status) {
+    if (status === "scanned") {
+      query.$or = [{ status: "scanned" }, { isScanned: true }];
+    } else if (status === "active") {
+      query.status = "active";
+      query.isScanned = { $ne: true };
+    } else {
+      query.status = String(status);
+    }
+  }
+  if (pricingName) {
+    query.pricingName = { $regex: String(pricingName), $options: "i" };
+  }
+
+  return query;
+};
+
+const buildTicketFindQuery = (query, { skip = 0, limit = 200 } = {}) =>
   Ticket.find(query).
   sort({ createdAt: -1 }).
   skip(skip).
-  limit(safeLimit).
+  limit(limit).
   select(
     "code status isScanned seat pricingName price cancelledAt scannedAt bookingId sessionId userId createdAt"
   ).
@@ -176,31 +229,44 @@ const listTickets = async ({ page, limit }) => {
     populate: { path: "eventId", select: "name" }
   }).
   populate({ path: "userId", select: "firstName lastName email" }).
-  lean()]
+  lean();
+
+const serializeTicketListItem = (ticket) => ({
+  id: ticket._id ? String(ticket._id) : null,
+  code: ticket.code,
+  status: resolveTicketStatus(ticket),
+  isScanned: resolveTicketStatus(ticket) === "scanned",
+  seat: ticket.seat || null,
+  pricingName: ticket.pricingName,
+  price: ticket.price,
+  booking: ticket.bookingId ?
+  {
+    id: ticket.bookingId._id ?
+    String(ticket.bookingId._id) :
+    null,
+    bookingNumber: ticket.bookingId.bookingNumber || ""
+  } :
+  null,
+  session: serializeSession(ticket.sessionId),
+  user: serializeUser(ticket.userId),
+  scannedAt: ticket.scannedAt || null,
+  cancelledAt: ticket.cancelledAt || null,
+  createdAt: ticket.createdAt || null
+});
+
+const listTickets = async ({ page, limit, dateFrom, dateTo, status, pricingName }) => {
+  const { page: safePage, limit: safeLimit, skip } = resolvePagination(
+    page,
+    limit
   );
 
-  const items = tickets.map((ticket) => ({
-    id: ticket._id ? String(ticket._id) : null,
-    code: ticket.code,
-    status: resolveTicketStatus(ticket),
-    isScanned: resolveTicketStatus(ticket) === "scanned",
-    seat: ticket.seat || null,
-    pricingName: ticket.pricingName,
-    price: ticket.price,
-    booking: ticket.bookingId ?
-    {
-      id: ticket.bookingId._id ?
-      String(ticket.bookingId._id) :
-      null,
-      bookingNumber: ticket.bookingId.bookingNumber || ""
-    } :
-    null,
-    session: serializeSession(ticket.sessionId),
-    user: serializeUser(ticket.userId),
-    scannedAt: ticket.scannedAt || null,
-    cancelledAt: ticket.cancelledAt || null,
-    createdAt: ticket.createdAt || null
-  }));
+  const query = buildTicketsQuery({ dateFrom, dateTo, status, pricingName });
+  const [total, tickets] = await Promise.all([
+  Ticket.countDocuments(query),
+  buildTicketFindQuery(query, { skip, limit: safeLimit })]
+  );
+
+  const items = tickets.map(serializeTicketListItem);
 
   return {
     items,
@@ -208,6 +274,12 @@ const listTickets = async ({ page, limit }) => {
     page: safePage,
     limit: safeLimit
   };
+};
+
+const listTicketsForExport = async ({ dateFrom, dateTo, status, pricingName } = {}) => {
+  const query = buildTicketsQuery({ dateFrom, dateTo, status, pricingName });
+  const tickets = await buildTicketFindQuery(query, { skip: 0, limit: 5000 });
+  return tickets.map(serializeTicketListItem);
 };
 
 const scanTicket = async ({ userId, userRole, payload }) => {
@@ -638,6 +710,7 @@ const repriceTicket = async ({ ticketId, newPricingName, paymentMethod = "cash",
 
 module.exports = {
   listTickets,
+  listTicketsForExport,
   scanTicket,
   searchTicket,
   repriceTicket,

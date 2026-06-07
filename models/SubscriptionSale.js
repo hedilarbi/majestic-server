@@ -97,7 +97,7 @@ const subscriptionSaleSchema = new mongoose.Schema(
     },
     paymentMethod: {
       type: String,
-      enum: ["online", "cash", "card"],
+      enum: ["online", "cash", "card", "transfer"],
       required: true,
     },
     paymentStatus: {
@@ -141,6 +141,10 @@ const subscriptionSaleSchema = new mongoose.Schema(
       type: Number,
       default: 1,
       min: 1,
+    },
+    expiresAt: {
+      type: Date,
+      default: null,
     },
   },
   { timestamps: true },
