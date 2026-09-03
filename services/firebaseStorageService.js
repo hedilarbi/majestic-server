@@ -5,7 +5,7 @@ const crypto = require("crypto");
 const admin = require("firebase-admin");
 require("firebase-admin/storage");
 
-const DEFAULT_BUCKET = "majestic-83244.firebasestorage.app";
+const DEFAULT_BUCKET = process.env.FIREBASE_BUCKET;
 
 const normalizeBucketName = (bucket) => {
   if (!bucket) {
