@@ -4,6 +4,8 @@ const Booking = require("../models/Booking");
 const Event = require("../models/Event");
 const Session = require("../models/Session");
 const Ticket = require("../models/Ticket");
+const Subscription = require("../models/Subscription");
+const SubscriptionSale = require("../models/SubscriptionSale");
 
 const ACTIVE_BOOKING_STATUSES = ["confirmed", "used"];
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -219,6 +221,18 @@ const mapToSortedArray = (map, sorter) =>
     .map(([key, value]) => ({ key, ...value }))
     .sort(sorter);
 
+const getPricingColumnKey = (pricingName, price) => {
+  const name = String(pricingName || "Tarif").trim() || "Tarif";
+  const numPrice = Number(price) || 0;
+  return `${name}___${numPrice}`;
+};
+
+const isSubscriptionBooking = (booking) =>
+  booking?.paymentMethod === "subscription" ||
+  Boolean(booking?.subscriptionTransaction?.subscriptionCode) ||
+  Boolean(booking?.subscriptionTransaction?.subscriptionSaleId) ||
+  Boolean(booking?.subscriptionTransaction?.subscriptionId);
+
 const buildPricingBreakdown = (tickets = []) => {
   const pricingMap = new Map();
 
@@ -231,11 +245,13 @@ const buildPricingBreakdown = (tickets = []) => {
       pricingName,
       price,
       ticketsSold: 0,
+      revenue: 0,
     };
 
     pricingMap.set(key, {
       ...current,
       ticketsSold: current.ticketsSold + 1,
+      revenue: current.revenue + price,
     });
   });
 
@@ -279,6 +295,48 @@ const formatPricingSummaryInline = (items = []) => {
       return `${label}: ${item?.ticketsSold || 0}`;
     })
     .join("   ");
+};
+
+const computeDynamicColumnWidths = (contentWidth, pricingColsCount) => {
+  if (pricingColsCount <= 0) {
+    return [
+      contentWidth * 0.28,
+      contentWidth * 0.20,
+      contentWidth * 0.12,
+      contentWidth * 0.15,
+      contentWidth * 0.12,
+      contentWidth * 0.13,
+    ];
+  }
+
+  let wEvent = Math.max(110, contentWidth * 0.18);
+  let wSession = Math.max(95, contentWidth * 0.14);
+  let wSold = Math.max(50, contentWidth * 0.07);
+  let wSub = Math.max(70, contentWidth * 0.10);
+  let wPromo = Math.max(55, contentWidth * 0.08);
+  let wRev = Math.max(65, contentWidth * 0.09);
+
+  let baseSum = wEvent + wSession + wSold + wSub + wPromo + wRev;
+  let remaining = contentWidth - baseSum;
+
+  const minPricingWidth = 48;
+  if (remaining < pricingColsCount * minPricingWidth) {
+    const deficit = pricingColsCount * minPricingWidth - remaining;
+    const factor = Math.max(0.55, (baseSum - deficit) / baseSum);
+    wEvent *= factor;
+    wSession *= factor;
+    wSold *= factor;
+    wSub *= factor;
+    wPromo *= factor;
+    wRev *= factor;
+    baseSum = wEvent + wSession + wSold + wSub + wPromo + wRev;
+    remaining = contentWidth - baseSum;
+  }
+
+  const wPricingCol = remaining / pricingColsCount;
+  const pricingWidths = Array(pricingColsCount).fill(wPricingCol);
+
+  return [wEvent, wSession, wSold, ...pricingWidths, wSub, wPromo, wRev];
 };
 
 const buildStatistics = async ({ dateStart, dateEnd, eventId, sessionTime }) => {
@@ -338,11 +396,15 @@ const buildStatistics = async ({ dateStart, dateEnd, eventId, sessionTime }) => 
         sessionTime: resolvedSessionTime,
       },
       availableSessionTimes,
+      pricingColumns: [],
       totals: {
         sessionsCount: 0,
         soldTickets: 0,
+        regularTicketsSold: 0,
         remainingTickets: 0,
         subscriptionTickets: 0,
+        subscriptionRevenue: 0,
+        regularRevenue: 0,
         promotionDiscountAmount: 0,
         revenue: 0,
         bookingsCount: 0,
@@ -378,6 +440,105 @@ const buildStatistics = async ({ dateStart, dateEnd, eventId, sessionTime }) => 
         .lean()
     : [];
 
+  const subscriptionSaleIds = Array.from(
+    new Set(
+      bookings
+        .map((booking) => booking?.subscriptionTransaction?.subscriptionSaleId)
+        .filter(Boolean)
+        .map((id) => id.toString()),
+    ),
+  );
+  const subscriptionIds = Array.from(
+    new Set(
+      bookings
+        .map((booking) => booking?.subscriptionTransaction?.subscriptionId)
+        .filter(Boolean)
+        .map((id) => id.toString()),
+    ),
+  );
+  const subscriptionCodes = Array.from(
+    new Set(
+      bookings
+        .map((booking) =>
+          String(booking?.subscriptionTransaction?.subscriptionCode || "")
+            .trim()
+            .toUpperCase(),
+        )
+        .filter(Boolean),
+    ),
+  );
+
+  const [subscriptionSalesByIdList, subscriptionSalesByCodeList, subscriptionsList] =
+    await Promise.all([
+      subscriptionSaleIds.length
+        ? SubscriptionSale.find({ _id: { $in: subscriptionSaleIds } })
+            .select("price totalCredits subscriptionId subscriptionCode")
+            .lean()
+        : [],
+      subscriptionCodes.length
+        ? SubscriptionSale.find({ subscriptionCode: { $in: subscriptionCodes } })
+            .select("price totalCredits subscriptionId subscriptionCode")
+            .lean()
+        : [],
+      subscriptionIds.length
+        ? Subscription.find({ _id: { $in: subscriptionIds } })
+            .select("price totalCredits name")
+            .lean()
+        : [],
+    ]);
+
+  const subscriptionSaleByIdMap = new Map(
+    subscriptionSalesByIdList.map((item) => [item._id.toString(), item]),
+  );
+  const subscriptionSaleByCodeMap = new Map(
+    subscriptionSalesByCodeList.map((item) => [
+      String(item.subscriptionCode || "").trim().toUpperCase(),
+      item,
+    ]),
+  );
+  const subscriptionByIdMap = new Map(
+    subscriptionsList.map((item) => [item._id.toString(), item]),
+  );
+
+  const getBookingSubscriptionRevenue = (booking) => {
+    if (!isSubscriptionBooking(booking)) {
+      return 0;
+    }
+
+    const tx = booking.subscriptionTransaction || {};
+    const saleId = tx.subscriptionSaleId ? tx.subscriptionSaleId.toString() : "";
+    const code = String(tx.subscriptionCode || "").trim().toUpperCase();
+    const subId = tx.subscriptionId ? tx.subscriptionId.toString() : "";
+
+    const sale =
+      (saleId ? subscriptionSaleByIdMap.get(saleId) : null) ||
+      (code ? subscriptionSaleByCodeMap.get(code) : null);
+    const sub = subId ? subscriptionByIdMap.get(subId) : null;
+
+    let unitPrice = 0;
+    if (sale && Number.isFinite(sale.price) && Number(sale.totalCredits) > 0) {
+      unitPrice = Number(sale.price) / Number(sale.totalCredits);
+    } else if (sub && Number.isFinite(sub.price) && Number(sub.totalCredits) > 0) {
+      unitPrice = Number(sub.price) / Number(sub.totalCredits);
+    } else if (
+      sale &&
+      Number.isFinite(sale.price) &&
+      sub &&
+      Number(sub.totalCredits) > 0
+    ) {
+      unitPrice = Number(sale.price) / Number(sub.totalCredits);
+    }
+
+    const creditsUsed =
+      Number.isFinite(tx.creditsUsed) && Number(tx.creditsUsed) > 0
+        ? Number(tx.creditsUsed)
+        : Array.isArray(booking.seats)
+          ? booking.seats.length
+          : 0;
+
+    return creditsUsed * unitPrice;
+  };
+
   const bookingsBySessionId = bookings.reduce((accumulator, booking) => {
     const key = booking.sessionId ? booking.sessionId.toString() : "";
     if (!key) {
@@ -402,42 +563,99 @@ const buildStatistics = async ({ dateStart, dateEnd, eventId, sessionTime }) => 
     return accumulator;
   }, new Map());
 
+  const bookingsById = new Map(bookings.map((booking) => [booking._id.toString(), booking]));
+  const globalPricingColumnsMap = new Map();
+
+  tickets.forEach((ticket) => {
+    const bookingKey = ticket.bookingId ? ticket.bookingId.toString() : "";
+    const booking = bookingsById.get(bookingKey);
+    if (booking && isSubscriptionBooking(booking)) {
+      return;
+    }
+
+    const pricingName = String(ticket?.pricingName || "Tarif").trim() || "Tarif";
+    const price = Number(ticket?.price) || 0;
+    const colKey = getPricingColumnKey(pricingName, price);
+
+    const current = globalPricingColumnsMap.get(colKey) || {
+      key: colKey,
+      pricingName,
+      price,
+      ticketsSold: 0,
+      revenue: 0,
+    };
+
+    globalPricingColumnsMap.set(colKey, {
+      ...current,
+      ticketsSold: current.ticketsSold + 1,
+      revenue: current.revenue + price,
+    });
+  });
+
+  const pricingColumns = Array.from(globalPricingColumnsMap.values()).sort(
+    (left, right) => {
+      const byCount = right.ticketsSold - left.ticketsSold;
+      if (byCount !== 0) {
+        return byCount;
+      }
+      return left.pricingName.localeCompare(right.pricingName, "fr");
+    },
+  );
+
   const sessionRows = sortSessionRows(
     sessions.map((session) => {
       const sessionKey = session._id.toString();
       const relatedBookings = bookingsBySessionId.get(sessionKey) || [];
-      const relatedTickets = relatedBookings.flatMap((booking) => {
+      const regularBookings = relatedBookings.filter(
+        (booking) => !isSubscriptionBooking(booking),
+      );
+      const subscriptionBookings = relatedBookings.filter((booking) =>
+        isSubscriptionBooking(booking),
+      );
+
+      const relatedRegularTickets = regularBookings.flatMap((booking) => {
         const bookingKey = booking?._id ? booking._id.toString() : "";
         return bookingKey ? ticketsByBookingId.get(bookingKey) || [] : [];
       });
-      const soldTickets = relatedBookings.reduce(
+
+      const pricingCounts = {};
+      relatedRegularTickets.forEach((ticket) => {
+        const pricingName = String(ticket?.pricingName || "Tarif").trim() || "Tarif";
+        const price = Number(ticket?.price) || 0;
+        const colKey = getPricingColumnKey(pricingName, price);
+        pricingCounts[colKey] = (pricingCounts[colKey] || 0) + 1;
+      });
+
+      const pricingBreakdown = buildPricingBreakdown(relatedRegularTickets);
+
+      const regularTicketsSold = regularBookings.reduce(
         (total, booking) =>
           total + (Array.isArray(booking.seats) ? booking.seats.length : 0),
         0,
       );
-      const revenue = relatedBookings.reduce(
+      const regularRevenue = regularBookings.reduce(
         (total, booking) => total + (Number(booking.totalAmount) || 0),
         0,
       );
-      const subscriptionTickets = relatedBookings.reduce((total, booking) => {
-        const usesSubscription =
-          booking.paymentMethod === "subscription" ||
-          Boolean(booking?.subscriptionTransaction?.subscriptionCode);
 
-        if (!usesSubscription) {
-          return total;
-        }
+      const subscriptionTickets = subscriptionBookings.reduce(
+        (total, booking) =>
+          total + (Array.isArray(booking.seats) ? booking.seats.length : 0),
+        0,
+      );
+      const subscriptionRevenue = subscriptionBookings.reduce(
+        (total, booking) => total + getBookingSubscriptionRevenue(booking),
+        0,
+      );
 
-        return (
-          total + (Array.isArray(booking.seats) ? booking.seats.length : 0)
-        );
-      }, 0);
+      const soldTickets = regularTicketsSold + subscriptionTickets;
+      const revenue = regularRevenue + subscriptionRevenue;
+
       const promotionDiscountAmount = relatedBookings.reduce(
         (total, booking) =>
           total + (Number(booking?.promotion?.discountAmount) || 0),
         0,
       );
-      const pricingBreakdown = buildPricingBreakdown(relatedTickets);
 
       return {
         sessionId: sessionKey,
@@ -453,9 +671,13 @@ const buildStatistics = async ({ dateStart, dateEnd, eventId, sessionTime }) => 
         sessionTime: session.sessionTime || "",
         remainingTickets: Number(session.availableSeats) || 0,
         soldTickets,
+        regularTicketsSold,
+        pricingCounts,
         pricingBreakdown,
         subscriptionTickets,
+        subscriptionRevenue,
         promotionDiscountAmount,
+        regularRevenue,
         revenue,
         totalSeats: Number(session.totalSeats) || 0,
         status: session.status || "",
@@ -488,7 +710,10 @@ const buildStatistics = async ({ dateStart, dateEnd, eventId, sessionTime }) => 
     const sessionKey = booking.sessionId ? booking.sessionId.toString() : "";
     const session = sessionsById.get(sessionKey);
     const ticketCount = Array.isArray(booking.seats) ? booking.seats.length : 0;
-    const revenue = Number(booking.totalAmount) || 0;
+    const isSub = isSubscriptionBooking(booking);
+    const revenue = isSub
+      ? getBookingSubscriptionRevenue(booking)
+      : Number(booking.totalAmount) || 0;
     const bookingDate = new Date(booking.createdAt);
     const bookingDayKey = formatDayKey(bookingDate);
     const bookingHour = Number.isNaN(bookingDate.getTime())
@@ -499,9 +724,6 @@ const buildStatistics = async ({ dateStart, dateEnd, eventId, sessionTime }) => 
       source === "ticket_office"
         ? "Guichet"
         : "Web";
-    const usesSubscription =
-      booking.paymentMethod === "subscription" ||
-      Boolean(booking?.subscriptionTransaction?.subscriptionCode);
     const usesPromo = Boolean(booking?.promotion?.code);
     const discountAmount = Number(booking?.promotion?.discountAmount) || 0;
 
@@ -523,7 +745,7 @@ const buildStatistics = async ({ dateStart, dateEnd, eventId, sessionTime }) => 
       revenue,
     });
 
-    incrementMap(subscriptionMap, usesSubscription ? "Avec abonnement" : "Sans abonnement", {
+    incrementMap(subscriptionMap, isSub ? "Avec abonnement" : "Sans abonnement", {
       ticketsSold: ticketCount,
       bookingCount: 1,
       revenue,
@@ -562,6 +784,12 @@ const buildStatistics = async ({ dateStart, dateEnd, eventId, sessionTime }) => 
   });
 
   tickets.forEach((ticket) => {
+    const bookingKey = ticket.bookingId ? ticket.bookingId.toString() : "";
+    const booking = bookingsById.get(bookingKey);
+    if (booking && isSubscriptionBooking(booking)) {
+      return;
+    }
+
     const pricingName = ticket.pricingName || "Tarif";
     const price = Number(ticket.price) || 0;
     const key = `${pricingName} • ${price.toLocaleString("fr-FR", {
@@ -587,9 +815,14 @@ const buildStatistics = async ({ dateStart, dateEnd, eventId, sessionTime }) => 
     (accumulator, row) => ({
       sessionsCount: accumulator.sessionsCount + 1,
       soldTickets: accumulator.soldTickets + row.soldTickets,
+      regularTicketsSold:
+        accumulator.regularTicketsSold + (row.regularTicketsSold || 0),
       remainingTickets: accumulator.remainingTickets + row.remainingTickets,
       subscriptionTickets:
         accumulator.subscriptionTickets + row.subscriptionTickets,
+      subscriptionRevenue:
+        accumulator.subscriptionRevenue + (row.subscriptionRevenue || 0),
+      regularRevenue: accumulator.regularRevenue + (row.regularRevenue || 0),
       promotionDiscountAmount:
         accumulator.promotionDiscountAmount + row.promotionDiscountAmount,
       revenue: accumulator.revenue + row.revenue,
@@ -598,8 +831,11 @@ const buildStatistics = async ({ dateStart, dateEnd, eventId, sessionTime }) => 
     {
       sessionsCount: 0,
       soldTickets: 0,
+      regularTicketsSold: 0,
       remainingTickets: 0,
       subscriptionTickets: 0,
+      subscriptionRevenue: 0,
+      regularRevenue: 0,
       promotionDiscountAmount: 0,
       revenue: 0,
       bookingsCount: bookings.length,
@@ -614,6 +850,7 @@ const buildStatistics = async ({ dateStart, dateEnd, eventId, sessionTime }) => 
       sessionTime: resolvedSessionTime,
     },
     availableSessionTimes,
+    pricingColumns,
     totals,
     sessionRows,
     charts: {
@@ -763,16 +1000,12 @@ const buildSessionSalesPdf = async ({
     const pageHeight = doc.page.height;
     const margin = doc.page.margins.left;
     const contentWidth = pageWidth - margin * 2;
-    const columnWidths = [
-      contentWidth * 0.22,
-      contentWidth * 0.13,
-      contentWidth * 0.08,
-      contentWidth * 0.24,
-      contentWidth * 0.1,
-      contentWidth * 0.11,
-      contentWidth * 0.12,
-    ];
-    const tableHeaderHeight = 30;
+    const pricingColumns = Array.isArray(statistics.pricingColumns)
+      ? statistics.pricingColumns
+      : [];
+    const pricingColsCount = pricingColumns.length;
+    const columnWidths = computeDynamicColumnWidths(contentWidth, pricingColsCount);
+    const tableHeaderHeight = 34;
     const minimumRowHeight = 34;
     const tableLeft = margin;
     const pageBottomLimit = pageHeight - doc.page.margins.bottom;
@@ -815,7 +1048,7 @@ const buildSessionSalesPdf = async ({
 
       cursorY += filterBoxHeight + 16;
 
-      const ticketsSummaryLine = `Séances: ${statistics.totals.sessionsCount}   Billets vendus: ${statistics.totals.soldTickets}${pricingSummary ? ` (${pricingSummary})` : ""}   Recette: ${formatCurrency(statistics.totals.revenue)}`;
+      const ticketsSummaryLine = `Séances: ${statistics.totals.sessionsCount}   Billets vendus: ${statistics.totals.soldTickets} (Tarifs: ${statistics.totals.regularTicketsSold || 0} • Abonnements: ${statistics.totals.subscriptionTickets || 0})   Recette totale: ${formatCurrency(statistics.totals.revenue)}`;
 
       doc
         .fillColor("#0f172a")
@@ -831,18 +1064,28 @@ const buildSessionSalesPdf = async ({
       cursorY +=
         doc.heightOfString(ticketsSummaryLine, { width: contentWidth }) + 5;
 
-      doc
-        .fillColor("#0f172a")
-        .font("Helvetica-Bold")
-        .fontSize(10)
-        .text(
-          `Billets abonnement: ${statistics.totals.subscriptionTickets || 0}   Promotions: ${formatCurrency(statistics.totals.promotionDiscountAmount || 0)}`,
-          margin,
-          cursorY,
-          { width: contentWidth },
-        );
+      if (pricingSummary) {
+        doc
+          .fillColor("#334155")
+          .font("Helvetica")
+          .fontSize(9.5)
+          .text(`Ventes par tarif: ${pricingSummary}`, margin, cursorY, {
+            width: contentWidth,
+          });
+        cursorY +=
+          doc.heightOfString(`Ventes par tarif: ${pricingSummary}`, {
+            width: contentWidth,
+          }) + 4;
+      }
 
-      cursorY += 28;
+      const subSummaryLine = `Ventes par abonnement: ${statistics.totals.subscriptionTickets || 0} billets (${formatCurrency(statistics.totals.subscriptionRevenue || 0)})   Promotions: ${formatCurrency(statistics.totals.promotionDiscountAmount || 0)}`;
+      doc
+        .fillColor("#334155")
+        .font("Helvetica-Bold")
+        .fontSize(9.5)
+        .text(subSummaryLine, margin, cursorY, { width: contentWidth });
+
+      cursorY += doc.heightOfString(subSummaryLine, { width: contentWidth }) + 20;
     };
 
     const startContinuationPage = () => {
@@ -852,24 +1095,31 @@ const buildSessionSalesPdf = async ({
 
     const drawTableHeader = () => {
       let columnX = tableLeft;
+      const headers = [
+        "Événement",
+        "Séance",
+        "Billets vendus",
+        ...pricingColumns.map((col) => {
+          const priceLabel = formatPricingAmount(col.price);
+          return priceLabel ? `${col.pricingName}\n(${priceLabel} DT)` : col.pricingName;
+        }),
+        "Abonnement\n(billets / recette)",
+        "Promotion",
+        "Recette totale",
+      ];
 
       doc
         .rect(tableLeft, cursorY, contentWidth, tableHeaderHeight)
         .fill("#1034a6");
-      doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(8.5);
+      doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(8);
 
-      [
-        "Événement",
-        "Séance",
-        "Billets vendus",
-        "Par tarif",
-        "Abonnement",
-        "Promotion",
-        "Recette",
-      ].forEach((label, index) => {
-        doc.text(label, columnX + 6, cursorY + 8, {
-          width: columnWidths[index] - 12,
+      headers.forEach((label, index) => {
+        const isCenter = index >= 2 && index < headers.length - 1;
+        const isRight = index === headers.length - 1;
+        doc.text(label, columnX + 4, cursorY + 6, {
+          width: columnWidths[index] - 8,
           lineGap: 1,
+          align: isCenter ? "center" : isRight ? "right" : "left",
         });
         columnX += columnWidths[index];
       });
@@ -888,9 +1138,14 @@ const buildSessionSalesPdf = async ({
       row.eventName || "-",
       `${formatDateLabel(row.date)}${row.sessionTime ? ` • ${row.sessionTime}` : ""}`,
       String(row.soldTickets || 0),
-      formatPricingBreakdownLabel(row.pricingBreakdown),
-      String(row.subscriptionTickets || 0),
-      formatCurrency(row.promotionDiscountAmount || 0),
+      ...pricingColumns.map((col) => {
+        const count = row.pricingCounts?.[col.key] || 0;
+        return count > 0 ? String(count) : "-";
+      }),
+      row.subscriptionTickets > 0 || row.subscriptionRevenue > 0
+        ? `${row.subscriptionTickets || 0}\n(${formatCurrency(row.subscriptionRevenue || 0)})`
+        : "-",
+      row.promotionDiscountAmount > 0 ? formatCurrency(row.promotionDiscountAmount) : "-",
       formatCurrency(row.revenue || 0),
     ];
 
@@ -899,7 +1154,7 @@ const buildSessionSalesPdf = async ({
 
       const textHeight = rowValues.reduce((maxHeight, value, index) => {
         const height = doc.heightOfString(String(value), {
-          width: columnWidths[index] - 12,
+          width: columnWidths[index] - 8,
           lineGap: 1,
         });
 
@@ -937,10 +1192,13 @@ const buildSessionSalesPdf = async ({
       doc.fillColor("#0f172a").font("Helvetica").fontSize(8.2);
 
       rowValues.forEach((value, index) => {
-        doc.text(value, columnX + 6, cursorY + 8, {
-          width: columnWidths[index] - 12,
+        const isCenter = index >= 2 && index < rowValues.length - 1;
+        const isRight = index === rowValues.length - 1;
+        doc.text(String(value), columnX + 4, cursorY + 8, {
+          width: columnWidths[index] - 8,
           height: currentRowHeight - 16,
           lineGap: 1,
+          align: isCenter ? "center" : isRight ? "right" : "left",
           ellipsis: true,
         });
         columnX += columnWidths[index];
