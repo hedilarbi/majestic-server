@@ -1,3 +1,4 @@
+require("dotenv/config");
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
@@ -34,8 +35,6 @@ const auditLogRoutes = require("./routes/audit-logs");
 const paymentRoutes = require("./routes/payments");
 const partnerRoutes = require("./routes/partners");
 const searchRoutes = require("./routes/search");
-
-require("dotenv/config");
 
 const { createServer } = require("http");
 const { Server } = require("socket.io");
