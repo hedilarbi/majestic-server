@@ -283,15 +283,21 @@ const deleteEvent = async (id) => {
 
 const getHomeContent = async () => {
   const now = new Date();
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
   const activeWindow = {
     status: "active",
     availableFrom: { $lte: now },
     availableTo: { $gte: now },
   };
 
-  const sessionEventIds = await Session.distinct("eventId", {
-    status: "in_progress",
-  });
+  const [sessionEventIds, allSessionEventIds] = await Promise.all([
+    Session.distinct("eventId", {
+      status: "in_progress",
+      date: { $gte: startOfToday },
+    }),
+    Session.distinct("eventId"),
+  ]);
   const sessionFilter = sessionEventIds.length
     ? { _id: { $in: sessionEventIds } }
     : { _id: { $in: [] } };
@@ -301,6 +307,8 @@ const getHomeContent = async () => {
   };
   const upcomingHomeFilter = {
     status: "active",
+    type: "movie",
+    _id: { $nin: allSessionEventIds },
     availableTo: { $gte: now },
     $or: [
       { releaseDate: { $gt: now } },
@@ -344,6 +352,8 @@ const getHomeContent = async () => {
 
 const getEventsWithALAffiche = async ({ type, genre }) => {
   const now = new Date();
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
   const baseFilters = {
     status: "active",
   };
@@ -392,11 +402,18 @@ const getEventsWithALAffiche = async ({ type, genre }) => {
       ? HomeHero.findOne(afficheFilter).populate("eventId")
       : Promise.resolve(null);
 
-  const [sessionEventIds, aLaffiche, showTypes] = await Promise.all([
-    Session.distinct("eventId", { status: "in_progress" }),
-    aLaffichePromise,
-    normalizedType === "show" ? ShowType.find().sort({ name: 1 }) : [],
-  ]);
+  const [sessionEventIds, allSessionEventIds, aLaffiche, showTypes] =
+    await Promise.all([
+      Session.distinct("eventId", {
+        status: "in_progress",
+        date: { $gte: startOfToday },
+      }),
+      Session.distinct("eventId"),
+      aLaffichePromise,
+      normalizedType === "show" ? ShowType.find().sort({ name: 1 }) : [],
+    ]);
+
+  upcomingFilters._id = { $nin: allSessionEventIds };
 
   const eventsPromise = sessionEventIds.length
     ? Event.find({ ...activeWindowFilters, _id: { $in: sessionEventIds } }).sort({

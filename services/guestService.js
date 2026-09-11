@@ -163,8 +163,24 @@ const getGuestById = async (id) => {
   return sanitizeUser(user);
 };
 
+const deleteInactiveGuests = async () => {
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  try {
+    const result = await User.deleteMany({
+      role: GUEST_ROLE,
+      lastSeenAt: { $lt: twentyFourHoursAgo },
+    });
+    console.log(`[Guest Cron] Deleted ${result.deletedCount} inactive guest accounts.`);
+    return result.deletedCount;
+  } catch (error) {
+    console.error("[Guest Cron] Error deleting inactive guests:", error);
+    return 0;
+  }
+};
+
 module.exports = {
   createGuest,
   getGuestById,
   updateGuestContact,
+  deleteInactiveGuests,
 };

@@ -40,6 +40,7 @@ const { createServer } = require("http");
 const { Server } = require("socket.io");
 const { startExpirationWatcher } = require("./services/ExpirationWatcher");
 const { startSessionStatusCron } = require("./services/sessionStatusCron");
+const { startGuestCron } = require("./services/guestCron");
 
 const app = express();
 const httpServer = createServer(app);
@@ -111,6 +112,7 @@ mongoose
   .then(() => {
     startExpirationWatcher({ io, intervalMs: 1000 });
     startSessionStatusCron();
+    startGuestCron();
   })
   .catch((error) => {
     console.error("MongoDB connection error:", error);
