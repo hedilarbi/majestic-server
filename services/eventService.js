@@ -285,15 +285,11 @@ const getHomeContent = async () => {
   const now = new Date();
   const startOfToday = new Date(now);
   startOfToday.setHours(0, 0, 0, 0);
-  const activeWindow = {
-    status: "active",
-    availableFrom: { $lte: now },
-    availableTo: { $gte: now },
-  };
+  const activeSessionStatuses = ["pending", "scheduled", "in_progress"];
 
   const [sessionEventIds, allSessionEventIds] = await Promise.all([
     Session.distinct("eventId", {
-      status: "in_progress",
+      status: { $in: activeSessionStatuses },
       date: { $gte: startOfToday },
     }),
     Session.distinct("eventId"),
@@ -302,9 +298,6 @@ const getHomeContent = async () => {
     ? { _id: { $in: sessionEventIds } }
     : { _id: { $in: [] } };
 
-  const releasedFilter = {
-    $or: [{ releaseDate: null }, { releaseDate: { $exists: false } }, { releaseDate: { $lte: now } }],
-  };
   const upcomingHomeFilter = {
     status: "active",
     type: "movie",
@@ -318,10 +311,10 @@ const getHomeContent = async () => {
   };
 
   const [movies, shows, upcoming, homeSlider] = await Promise.all([
-    Event.find({ ...activeWindow, ...sessionFilter, ...releasedFilter, type: "movie" }).sort({
+    Event.find({ status: "active", ...sessionFilter, type: "movie" }).sort({
       availableFrom: 1,
     }),
-    Event.find({ ...activeWindow, ...sessionFilter, ...releasedFilter, type: "show" }).sort({
+    Event.find({ status: "active", ...sessionFilter, type: "show" }).sort({
       availableFrom: 1,
     }),
     Event.find(upcomingHomeFilter).sort({
@@ -354,6 +347,7 @@ const getEventsWithALAffiche = async ({ type, genre }) => {
   const now = new Date();
   const startOfToday = new Date(now);
   startOfToday.setHours(0, 0, 0, 0);
+  const activeSessionStatuses = ["pending", "scheduled", "in_progress"];
   const baseFilters = {
     status: "active",
   };
@@ -373,10 +367,6 @@ const getEventsWithALAffiche = async ({ type, genre }) => {
 
   const activeWindowFilters = {
     ...baseFilters,
-    availableFrom: { $lte: now },
-    availableTo: { $gte: now },
-    // Only show events where releaseDate is not set or already passed
-    $or: [{ releaseDate: null }, { releaseDate: { $exists: false } }, { releaseDate: { $lte: now } }],
   };
 
   const upcomingFilters = {
@@ -405,7 +395,7 @@ const getEventsWithALAffiche = async ({ type, genre }) => {
   const [sessionEventIds, allSessionEventIds, aLaffiche, showTypes] =
     await Promise.all([
       Session.distinct("eventId", {
-        status: "in_progress",
+        status: { $in: activeSessionStatuses },
         date: { $gte: startOfToday },
       }),
       Session.distinct("eventId"),

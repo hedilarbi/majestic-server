@@ -111,7 +111,7 @@ const listSessionsByDateGrouped = async (req, res) => {
   try {
     const groups = await sessionService.listSessionsByDateGrouped(
       req.query.date,
-      { status: "in_progress" }
+      {},
     );
 
     return res.status(200).json({ groups });

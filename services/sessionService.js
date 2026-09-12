@@ -692,6 +692,8 @@ const listSessionsByDateGrouped = async (dateValue, { status } = {}) => {
   };
   if (status) {
     filters.status = normalizeStatus(status);
+  } else {
+    filters.status = { $in: ["pending", "scheduled", "in_progress"] };
   }
 
   const sessions = await Session.find(filters)
