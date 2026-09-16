@@ -35,6 +35,7 @@ const auditLogRoutes = require("./routes/audit-logs");
 const paymentRoutes = require("./routes/payments");
 const partnerRoutes = require("./routes/partners");
 const searchRoutes = require("./routes/search");
+const ctpTestsRoutes = require("./routes/ctpTests");
 
 const { createServer } = require("http");
 const { Server } = require("socket.io");
@@ -106,6 +107,7 @@ app.use("/audit-logs", auditLogRoutes);
 app.use("/payments", paymentRoutes);
 app.use("/partners", partnerRoutes);
 app.use("/search", searchRoutes);
+app.use("/ctp-tests", ctpTestsRoutes);
 
 mongoose
   .connect(process.env.DB_CONNECTION)
