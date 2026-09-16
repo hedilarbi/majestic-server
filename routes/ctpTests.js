@@ -1,13 +1,10 @@
 const express = require("express");
 
-// Identifiants officiels fournis dans le Cahier de Recette ClicToPay
-// (CTP-20260514-2969-XY78 / Processing ID 0363062969). Intentionnellement
-// séparés de services/paymentService.js et du .env : ce module ne sert qu'à
-// exécuter les cas de test CTP-01 à CTP-08 pour remplir le cahier de recette.
+// Mêmes identifiants que services/paymentService.js, lus depuis le .env.
 const CTP_TEST_CONFIG = {
-  userName: "0363062969",
-  password: "Ey0m4Q3AfY1p",
-  baseUrl: "https://test.clictopay.com/payment/rest",
+  userName: process.env.IPAY_API_USER,
+  password: process.env.IPAY_API_PASSWORD,
+  baseUrl: process.env.IPAY_BASE_URL || "https://test.clictopay.com/payment/rest",
   currency: "788",
   language: "fr",
 };
