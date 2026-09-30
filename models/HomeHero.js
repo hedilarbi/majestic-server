@@ -34,6 +34,14 @@ const homeHeroSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    defaultMovieBanner: {
+      type: Boolean,
+      default: false,
+    },
+    defaultShowBanner: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true },
 );

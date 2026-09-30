@@ -347,7 +347,11 @@ const getHomeContent = async () => {
     Event.find(upcomingHomeFilter).sort({
       availableFrom: 1,
     }),
-    HomeHero.find({ active: true })
+    HomeHero.find({
+      active: true,
+      defaultMovieBanner: { $ne: true },
+      defaultShowBanner: { $ne: true },
+    })
       .populate("eventId")
       .sort({ order: 1, createdAt: -1 }),
   ]);
@@ -420,13 +424,47 @@ const getEventsWithALAffiche = async ({ type, genre }) => {
       ? HomeHero.findOne(afficheFilter).populate("eventId")
       : Promise.resolve(null);
 
-  const [sessionEventIds, allSessionEventIds, aLaffiche, showTypes] =
+  const defaultBannerPromise =
+    normalizedType === "movie" || normalizedType === "show"
+      ? HomeHero.findOne({
+          active: true,
+          [normalizedType === "movie"
+            ? "defaultMovieBanner"
+            : "defaultShowBanner"]: true,
+        })
+      : Promise.resolve(null);
+
+  const [sessionEventIds, allSessionEventIds, linkedBanner, defaultBanner, showTypes] =
     await Promise.all([
       getEventIdsByNearestSession(startOfToday),
       Session.distinct("eventId"),
       aLaffichePromise,
+      defaultBannerPromise,
       normalizedType === "show" ? ShowType.find().sort({ name: 1 }) : [],
     ]);
+
+  let aLaffiche = linkedBanner;
+  if (linkedBanner?.eventId?._id) {
+    const lastSession = await Session.findOne({
+      eventId: linkedBanner.eventId._id,
+      status: { $ne: "cancelled" },
+    })
+      .select("date sessionTime")
+      .sort({ date: -1, sessionTime: -1 })
+      .lean();
+
+    if (!lastSession?.date) {
+      aLaffiche = defaultBanner || linkedBanner;
+    } else {
+      const endOfLastSessionDay = new Date(lastSession.date);
+      endOfLastSessionDay.setHours(23, 59, 59, 999);
+      if (now > endOfLastSessionDay) {
+        aLaffiche = defaultBanner || linkedBanner;
+      }
+    }
+  } else if (!linkedBanner) {
+    aLaffiche = defaultBanner;
+  }
 
   upcomingFilters._id = { $nin: allSessionEventIds };
 

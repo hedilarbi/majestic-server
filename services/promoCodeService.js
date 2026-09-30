@@ -163,6 +163,12 @@ const validatePromoCodeForCheckout = async ({
     throw error;
   }
 
+  if (promoDoc.availability === "private" && userRole !== "customer") {
+    const error = new Error("Ce code promo est réservé aux clients connectés.");
+    error.status = 403;
+    throw error;
+  }
+
   if (promoDoc.expiresAt && new Date(promoDoc.expiresAt).getTime() < now.getTime()) {
     const error = new Error("Ce code promo est expiré.");
     error.status = 409;

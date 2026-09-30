@@ -24,6 +24,16 @@ const normalizePayload = (payload) => {
   if (Object.prototype.hasOwnProperty.call(payload, "eventId")) {
     data.eventId = payload.eventId || null;
   }
+  ["defaultMovieBanner", "defaultShowBanner"].forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(payload, field)) {
+      data[field] =
+        payload[field] === "true"
+          ? true
+          : payload[field] === "false"
+            ? false
+            : Boolean(payload[field]);
+    }
+  });
   if (Object.prototype.hasOwnProperty.call(payload, "order")) {
     const parsedOrder = Number(payload.order);
     if (!Number.isNaN(parsedOrder)) {
@@ -58,6 +68,16 @@ const createHomeHero = async ({ payload, file }) => {
 
   const upload = await uploadImage(file, { folder: "home-hero" });
   data.poster = upload.url;
+
+  if (data.defaultMovieBanner) {
+    data.defaultShowBanner = false;
+    data.eventId = null;
+    await HomeHero.updateMany({}, { defaultMovieBanner: false });
+  } else if (data.defaultShowBanner) {
+    data.defaultMovieBanner = false;
+    data.eventId = null;
+    await HomeHero.updateMany({}, { defaultShowBanner: false });
+  }
 
   const hero = await HomeHero.create(data);
   return hero;
@@ -102,6 +122,22 @@ const updateHomeHero = async (id, { payload, file }) => {
     const error = new Error("Invalid event id");
     error.status = 400;
     throw error;
+  }
+
+  if (data.defaultMovieBanner) {
+    data.defaultShowBanner = false;
+    data.eventId = null;
+    await HomeHero.updateMany(
+      { _id: { $ne: id } },
+      { defaultMovieBanner: false },
+    );
+  } else if (data.defaultShowBanner) {
+    data.defaultMovieBanner = false;
+    data.eventId = null;
+    await HomeHero.updateMany(
+      { _id: { $ne: id } },
+      { defaultShowBanner: false },
+    );
   }
 
   if (Object.keys(data).length === 0) {
