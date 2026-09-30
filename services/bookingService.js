@@ -1197,7 +1197,7 @@ const createBooking = async ({ payload, userId, userRole, io }) => {
 
       const session = await Session.findById(sessionId).
       select(
-        "roomId overrides pricingOverrides eventId date sessionTime version pricingLimits"
+        "roomId overrides pricingOverrides eventId date sessionTime version pricingLimits disabledPricingIds"
       ).
       populate({ path: "pricingOverrides.pricingId", select: "name price" }).
       session(dbSession);

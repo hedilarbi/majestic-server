@@ -2,6 +2,10 @@ const mongoose = require("mongoose");
 
 const pricingLimitSchema = new mongoose.Schema(
   {
+    pricingId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Pricing",
+    },
     name: {
       type: String,
       required: true,
@@ -142,6 +146,10 @@ const sessionSchema = new mongoose.Schema(
     },
     pricingLimits: {
       type: [pricingLimitSchema],
+      default: [],
+    },
+    disabledPricingIds: {
+      type: [{ type: mongoose.Schema.Types.ObjectId, ref: "Pricing" }],
       default: [],
     },
     sessionType: {

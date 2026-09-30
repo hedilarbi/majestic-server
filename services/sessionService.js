@@ -223,6 +223,9 @@ const normalizePayload = (payload) => {
   if (Object.prototype.hasOwnProperty.call(payload, "pricingLimits")) {
     data.pricingLimits = normalizeArray(payload.pricingLimits);
   }
+  if (Object.prototype.hasOwnProperty.call(payload, "disabledPricingIds")) {
+    data.disabledPricingIds = normalizeArray(payload.disabledPricingIds);
+  }
   if (Object.prototype.hasOwnProperty.call(payload, "status")) {
     data.status = payload.status;
   }
@@ -367,6 +370,22 @@ const validatePricingLimits = (pricingLimits) => {
   });
 };
 
+const validateDisabledPricingIds = (pricingIds) => {
+  if (!Array.isArray(pricingIds)) {
+    const error = new Error("disabledPricingIds must be an array");
+    error.status = 400;
+    throw error;
+  }
+
+  pricingIds.forEach((pricingId) => {
+    if (!mongoose.isValidObjectId(pricingId)) {
+      const error = new Error("Invalid pricingId in disabledPricingIds");
+      error.status = 400;
+      throw error;
+    }
+  });
+};
+
 const validateOverrides = (overrides) => {
   if (!Array.isArray(overrides)) {
     const error = new Error("overrides must be an array");
@@ -461,6 +480,14 @@ const createSession = async ({ payload, createdBy }) => {
   // if (data.pricingLimits) {
   //   validatePricingLimits(data.pricingLimits);
   // }
+
+  if (data.disabledPricingIds) {
+    validateDisabledPricingIds(data.disabledPricingIds);
+    const disabledIds = new Set(data.disabledPricingIds.map(String));
+    data.pricingLimits = (data.pricingLimits || []).filter(
+      (limit) => !disabledIds.has(String(limit?.pricingId || "")),
+    );
+  }
 
   if (data.overrides) {
     validateOverrides(data.overrides);
@@ -743,6 +770,13 @@ const updateSession = async (id, payload) => {
 
   if (data.pricingLimits) {
     validatePricingLimits(data.pricingLimits);
+  }
+  if (data.disabledPricingIds) {
+    validateDisabledPricingIds(data.disabledPricingIds);
+    const disabledIds = new Set(data.disabledPricingIds.map(String));
+    data.pricingLimits = (data.pricingLimits || []).filter(
+      (limit) => !disabledIds.has(String(limit?.pricingId || "")),
+    );
   }
   if (data.overrides) {
     validateOverrides(data.overrides);

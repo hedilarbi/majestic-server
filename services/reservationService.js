@@ -112,7 +112,7 @@ const getReservationForSession = async ({ sessionId, userId }) => {
 
   const session = await Session.findById(sessionId).
   select(
-    "roomId overrides pricingOverrides eventId date sessionTime version pricingLimits"
+    "roomId overrides pricingOverrides eventId date sessionTime version pricingLimits disabledPricingIds"
   ).
   populate("eventId").
   populate({ path: "pricingOverrides.pricingId", select: "name price" });
