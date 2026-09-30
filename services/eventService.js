@@ -6,6 +6,41 @@ const Session = require("../models/Session");
 const HomeHero = require("../models/HomeHero");
 const { uploadImage } = require("./firebaseStorageService");
 
+const ACTIVE_SESSION_STATUSES = ["pending", "scheduled", "in_progress"];
+
+const getEventIdsByNearestSession = async (startDate) => {
+  const sessions = await Session.find({
+    status: { $in: ACTIVE_SESSION_STATUSES },
+    date: { $gte: startDate },
+  })
+    .select("eventId date sessionTime")
+    .sort({ date: 1, sessionTime: 1 })
+    .lean();
+
+  const seen = new Set();
+  return sessions.reduce((eventIds, session) => {
+    const eventId = session.eventId ? String(session.eventId) : "";
+    if (!eventId || seen.has(eventId)) return eventIds;
+    seen.add(eventId);
+    eventIds.push(eventId);
+    return eventIds;
+  }, []);
+};
+
+const sortEventsByNearestSession = (events, orderedEventIds) => {
+  const positionById = new Map(
+    orderedEventIds.map((eventId, index) => [String(eventId), index]),
+  );
+  return [...events].sort((left, right) => {
+    const leftPosition = positionById.get(String(left?._id));
+    const rightPosition = positionById.get(String(right?._id));
+    return (
+      (leftPosition ?? Number.MAX_SAFE_INTEGER) -
+      (rightPosition ?? Number.MAX_SAFE_INTEGER)
+    );
+  });
+};
+
 const normalizeEnumValue = (value) => {
   if (typeof value !== "string") {
     return value;
@@ -285,13 +320,9 @@ const getHomeContent = async () => {
   const now = new Date();
   const startOfToday = new Date(now);
   startOfToday.setHours(0, 0, 0, 0);
-  const activeSessionStatuses = ["pending", "scheduled", "in_progress"];
 
   const [sessionEventIds, allSessionEventIds] = await Promise.all([
-    Session.distinct("eventId", {
-      status: { $in: activeSessionStatuses },
-      date: { $gte: startOfToday },
-    }),
+    getEventIdsByNearestSession(startOfToday),
     Session.distinct("eventId"),
   ]);
   const sessionFilter = sessionEventIds.length
@@ -310,13 +341,9 @@ const getHomeContent = async () => {
     ],
   };
 
-  const [movies, shows, upcoming, homeSlider] = await Promise.all([
-    Event.find({ status: "active", ...sessionFilter, type: "movie" }).sort({
-      availableFrom: 1,
-    }),
-    Event.find({ status: "active", ...sessionFilter, type: "show" }).sort({
-      availableFrom: 1,
-    }),
+  const [moviesRaw, showsRaw, upcoming, homeSlider] = await Promise.all([
+    Event.find({ status: "active", ...sessionFilter, type: "movie" }),
+    Event.find({ status: "active", ...sessionFilter, type: "show" }),
     Event.find(upcomingHomeFilter).sort({
       availableFrom: 1,
     }),
@@ -324,6 +351,8 @@ const getHomeContent = async () => {
       .populate("eventId")
       .sort({ order: 1, createdAt: -1 }),
   ]);
+  const movies = sortEventsByNearestSession(moviesRaw, sessionEventIds);
+  const shows = sortEventsByNearestSession(showsRaw, sessionEventIds);
 
   let lastExpiredShow = null;
   if (!shows.length) {
@@ -347,7 +376,6 @@ const getEventsWithALAffiche = async ({ type, genre }) => {
   const now = new Date();
   const startOfToday = new Date(now);
   startOfToday.setHours(0, 0, 0, 0);
-  const activeSessionStatuses = ["pending", "scheduled", "in_progress"];
   const baseFilters = {
     status: "active",
   };
@@ -394,10 +422,7 @@ const getEventsWithALAffiche = async ({ type, genre }) => {
 
   const [sessionEventIds, allSessionEventIds, aLaffiche, showTypes] =
     await Promise.all([
-      Session.distinct("eventId", {
-        status: { $in: activeSessionStatuses },
-        date: { $gte: startOfToday },
-      }),
+      getEventIdsByNearestSession(startOfToday),
       Session.distinct("eventId"),
       aLaffichePromise,
       normalizedType === "show" ? ShowType.find().sort({ name: 1 }) : [],
@@ -406,9 +431,7 @@ const getEventsWithALAffiche = async ({ type, genre }) => {
   upcomingFilters._id = { $nin: allSessionEventIds };
 
   const eventsPromise = sessionEventIds.length
-    ? Event.find({ ...activeWindowFilters, _id: { $in: sessionEventIds } }).sort({
-        availableFrom: 1,
-      })
+    ? Event.find({ ...activeWindowFilters, _id: { $in: sessionEventIds } })
     : Promise.resolve([]);
 
   const expiredShowsPromise =
@@ -416,11 +439,12 @@ const getEventsWithALAffiche = async ({ type, genre }) => {
       ? Event.find({ status: "active", type: "show", availableTo: { $lt: now } }).sort({ availableTo: -1 }).limit(6)
       : Promise.resolve([]);
 
-  const [events, prochainement, expiredShows] = await Promise.all([
+  const [eventsRaw, prochainement, expiredShows] = await Promise.all([
     eventsPromise,
     Event.find(upcomingFilters).sort({ availableFrom: 1 }),
     expiredShowsPromise,
   ]);
+  const events = sortEventsByNearestSession(eventsRaw, sessionEventIds);
 
   return { events, prochainement, aLaffiche, showTypes, expiredShows };
 };

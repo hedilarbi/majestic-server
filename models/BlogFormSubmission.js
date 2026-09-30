@@ -19,6 +19,7 @@ const BlogFormAnswerSchema = new mongoose.Schema(
         "textarea",
         "email",
         "number",
+        "date",
         "radio",
         "checkbox",
         "select",
@@ -65,8 +66,8 @@ const BlogFormSubmissionSchema = new mongoose.Schema(
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
       index: true,
+      default: null,
     },
     customerSnapshot: {
       firstName: {

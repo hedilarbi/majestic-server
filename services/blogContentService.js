@@ -117,6 +117,7 @@ const normalizeQuestion = (question, index) => {
     "textarea",
     "email",
     "number",
+    "date",
     "radio",
     "checkbox",
     "select",
@@ -257,6 +258,12 @@ const buildPayload = async ({ payload = {}, files = {}, actorId, existing = null
   }
 
   if (type === "trailer") {
+    if (Object.prototype.hasOwnProperty.call(payload, "contentHtml")) {
+      data.contentHtml = payload.contentHtml || "";
+    } else if (!existing) {
+      data.contentHtml = "";
+    }
+
     if (Object.prototype.hasOwnProperty.call(payload, "videoUrl")) {
       data.videoUrl = normalizeString(payload.videoUrl) || "";
     }
@@ -306,7 +313,6 @@ const buildPayload = async ({ payload = {}, files = {}, actorId, existing = null
   if (type === "trailer") {
     data.image = "";
     data.images = [];
-    data.contentHtml = "";
   }
 
   if (type === "form") {

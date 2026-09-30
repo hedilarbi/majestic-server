@@ -9,7 +9,7 @@ const BlogQuestionSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ["text", "textarea", "email", "number", "radio", "checkbox", "select"],
+      enum: ["text", "textarea", "email", "number", "date", "radio", "checkbox", "select"],
       required: true,
     },
     required: {

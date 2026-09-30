@@ -94,6 +94,22 @@ const ensureQuestionValue = (question, rawValue) => {
     throw error;
   }
 
+  if (value && type === "date") {
+    const parsedDate = /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? new Date(`${value}T00:00:00.000Z`)
+      : null;
+    const isValidDate =
+      parsedDate &&
+      !Number.isNaN(parsedDate.getTime()) &&
+      parsedDate.toISOString().slice(0, 10) === value;
+
+    if (!isValidDate) {
+      const error = new Error(`La réponse pour \"${questionLabel}\" doit être une date valide.`);
+      error.status = 400;
+      throw error;
+    }
+  }
+
   return { value, values: [] };
 };
 
