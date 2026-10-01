@@ -27,6 +27,25 @@ const getEventIdsByNearestSession = async (startDate) => {
   }, []);
 };
 
+const getEventIdsByLatestPastSession = async (startDate) => {
+  const sessions = await Session.find({
+    status: { $ne: "cancelled" },
+    date: { $lt: startDate },
+  })
+    .select("eventId date sessionTime")
+    .sort({ date: -1, sessionTime: -1 })
+    .lean();
+
+  const seen = new Set();
+  return sessions.reduce((eventIds, session) => {
+    const eventId = session.eventId ? String(session.eventId) : "";
+    if (!eventId || seen.has(eventId)) return eventIds;
+    seen.add(eventId);
+    eventIds.push(eventId);
+    return eventIds;
+  }, []);
+};
+
 const sortEventsByNearestSession = (events, orderedEventIds) => {
   const positionById = new Map(
     orderedEventIds.map((eventId, index) => [String(eventId), index]),
@@ -434,9 +453,19 @@ const getEventsWithALAffiche = async ({ type, genre }) => {
         })
       : Promise.resolve(null);
 
-  const [sessionEventIds, allSessionEventIds, linkedBanner, defaultBanner, showTypes] =
+  const [
+    sessionEventIds,
+    pastSessionEventIds,
+    allSessionEventIds,
+    linkedBanner,
+    defaultBanner,
+    showTypes,
+  ] =
     await Promise.all([
       getEventIdsByNearestSession(startOfToday),
+      normalizedType === "show"
+        ? getEventIdsByLatestPastSession(startOfToday)
+        : Promise.resolve([]),
       Session.distinct("eventId"),
       aLaffichePromise,
       defaultBannerPromise,
@@ -474,7 +503,14 @@ const getEventsWithALAffiche = async ({ type, genre }) => {
 
   const expiredShowsPromise =
     normalizedType === "show"
-      ? Event.find({ status: "active", type: "show", availableTo: { $lt: now } }).sort({ availableTo: -1 }).limit(6)
+      ? Event.find({
+          status: "active",
+          type: "show",
+          _id: {
+            $in: pastSessionEventIds,
+            $nin: sessionEventIds,
+          },
+        })
       : Promise.resolve([]);
 
   const [eventsRaw, prochainement, expiredShows] = await Promise.all([
@@ -484,7 +520,18 @@ const getEventsWithALAffiche = async ({ type, genre }) => {
   ]);
   const events = sortEventsByNearestSession(eventsRaw, sessionEventIds);
 
-  return { events, prochainement, aLaffiche, showTypes, expiredShows };
+  const orderedExpiredShows = sortEventsByNearestSession(
+    expiredShows,
+    pastSessionEventIds,
+  );
+
+  return {
+    events,
+    prochainement,
+    aLaffiche,
+    showTypes,
+    expiredShows: orderedExpiredShows,
+  };
 };
 
 module.exports = {
