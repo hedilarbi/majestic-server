@@ -14,6 +14,7 @@ const { enqueueBookingTicketEmail } = require("./ticketDeliveryService");
 const auditLogService = require("./auditLogService");
 const { registerPayment } = require("./paymentService");
 const { seatKey } = require("../utils/seatKey");
+const { buildSeatNumberMap, getSeatNumber } = require("../utils/seatNumbers");
 const {
   resolveRoom,
   buildPricingOverrideMap,
@@ -944,7 +945,8 @@ const cancelBookingTickets = async ({
       const nextSeats = sortSeats(
         remainingBookedTickets.map((ticket) => ({
           row: ticket.seat?.row,
-          col: ticket.seat?.col
+          col: ticket.seat?.col,
+          number: ticket.seat?.number
         }))
       );
       const nextTotalAmount =
@@ -1256,6 +1258,12 @@ const createBooking = async ({ payload, userId, userRole, io }) => {
       }
 
       validateSeatsAgainstLayout({ seats: mergedSeats, room, session });
+      const seatNumberMap = buildSeatNumberMap(room.layout);
+      const toBookedSeat = (seat) => ({
+        row: seat.row,
+        col: seat.col,
+        number: getSeatNumber(seatNumberMap, seat)
+      });
 
       const seatOrFilters = buildSeatOrFilters(mergedSeats);
       const existingBookings = await Booking.find({
@@ -1334,7 +1342,7 @@ const createBooking = async ({ payload, userId, userRole, io }) => {
         }
 
         return {
-          seat: { row: seat.row, col: seat.col },
+          seat: toBookedSeat(seat),
           pricingName,
           price
         };
@@ -1495,7 +1503,7 @@ const createBooking = async ({ payload, userId, userRole, io }) => {
       const variableTicketItems = variableSeatsSorted.map((seat, index) => {
         const assignment = assignments[index];
         return {
-          seat: { row: seat.row, col: seat.col },
+          seat: toBookedSeat(seat),
           pricingName: assignment.pricingName,
           price: assignment.price
         };
@@ -1759,10 +1767,7 @@ const createBooking = async ({ payload, userId, userRole, io }) => {
           isGuestFlow && normalizedCustomerContact
             ? normalizedCustomerContact
             : undefined,
-        seats: mergedSeats.map((seat) => ({
-          row: seat.row,
-          col: seat.col,
-        })),
+        seats: mergedSeats.map(toBookedSeat),
         ticketItems,
         totalAmount: resolvedTotalAmount,
         paymentMethod: resolvedPaymentMethod,

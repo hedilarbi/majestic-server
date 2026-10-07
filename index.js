@@ -64,6 +64,18 @@ io.on("connection", (socket) => {
       socket.leave(`session-${sessionId}`);
     }
   });
+
+  socket.on("join-subscription-scan-channel", ({ channel } = {}) => {
+    if (typeof channel === "string" && /^guichet-[a-f\d]{24}$/i.test(channel)) {
+      socket.join(channel);
+    }
+  });
+
+  socket.on("leave-subscription-scan-channel", ({ channel } = {}) => {
+    if (typeof channel === "string") {
+      socket.leave(channel);
+    }
+  });
 });
 
 app.use(cors());

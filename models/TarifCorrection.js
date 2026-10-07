@@ -29,6 +29,7 @@ const tarifCorrectionSchema = new mongoose.Schema(
     seat: {
       row: { type: String, required: true },
       col: { type: Number, required: true },
+      number: { type: Number },
     },
     oldPricingName: { type: String, required: true, trim: true },
     oldPrice: { type: Number, required: true, min: 0 },

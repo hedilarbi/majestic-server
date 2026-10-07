@@ -6,6 +6,7 @@ const Ticket = require("../models/Ticket");
 const Session = require("../models/Session");
 const User = require("../models/User");
 const { hasDashboardPermission } = require("../config/dashboardPermissions");
+const { formatSeatLabel } = require("../utils/seatNumbers");
 
 const normalizeText = (value) => (typeof value === "string" ? value.trim() : "");
 
@@ -77,7 +78,7 @@ const buildSeatLabel = (ticket) => {
   if (row === undefined || row === null || col === undefined || col === null) {
     return "";
   }
-  return `${row}${col}`;
+  return formatSeatLabel(ticket.seat);
 };
 
 const buildPricingBreakdown = (tickets = []) => {

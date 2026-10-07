@@ -1052,6 +1052,9 @@ const buildCashierRegisterTicketItems = async (closures = []) => {
             ticket?.seat?.col === 0 || Number.isFinite(Number(ticket?.seat?.col))
               ? Number(ticket.seat.col)
               : null,
+          number: Number(ticket?.seat?.number) > 0
+            ? Number(ticket.seat.number)
+            : null,
         },
         pricingName: ticket?.pricingName || "",
         price: roundAmount(ticket?.price),
@@ -1120,6 +1123,9 @@ const buildCashierRegisterTicketItems = async (closures = []) => {
           ticket?.seat?.col === 0 || Number.isFinite(Number(ticket?.seat?.col))
             ? Number(ticket.seat.col)
             : null,
+        number: Number(ticket?.seat?.number) > 0
+          ? Number(ticket.seat.number)
+          : null,
       },
       pricingName: ticket.pricingName || "",
       basePrice: roundAmount(ticket.basePrice),

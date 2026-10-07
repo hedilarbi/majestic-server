@@ -52,6 +52,7 @@ const bookingSchema = new mongoose.Schema(
         {
           row: { type: String, required: true },
           col: { type: Number, required: true },
+          number: { type: Number },
           _id: false,
         },
       ],
@@ -72,6 +73,7 @@ const bookingSchema = new mongoose.Schema(
           seat: {
             row: { type: String, required: true },
             col: { type: Number, required: true },
+            number: { type: Number },
           },
           pricingName: {
             type: String,

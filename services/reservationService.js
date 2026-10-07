@@ -5,6 +5,7 @@ const SeatReservation = require("../models/SeatReservation");
 const Session = require("../models/Session");
 const Booking = require("../models/Booking");
 const { seatKey } = require("../utils/seatKey");
+const { buildSeatNumberMap, getSeatNumber } = require("../utils/seatNumbers");
 const {
   resolveRoom,
   buildPricingOverrideMap,
@@ -171,11 +172,12 @@ const getReservationForSession = async ({ sessionId, userId }) => {
     session.pricingOverrides
   );
   const roomPricingOverrides = buildPricingOverrideMap(room.pricingOverrides);
+  const seatNumberMap = buildSeatNumberMap(room.layout);
   const seatsWithOverrides = resolveReservationSeatsWithOverrides({
     seats: mergedSeats,
     sessionPricingOverrides,
     roomPricingOverrides
-  });
+  }).map((seat) => ({ ...seat, number: getSeatNumber(seatNumberMap, seat) }));
 
   const sessionInfo = session.toObject({ versionKey: false });
   sessionInfo.room = {

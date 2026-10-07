@@ -5,6 +5,7 @@ const path = require("path");
 const Booking = require("../models/Booking");
 const Ticket = require("../models/Ticket");
 const Room = require("../models/Room");
+const { formatSeatLabel } = require("../utils/seatNumbers");
 
 let cachedTransporter = null;
 let cachedNodemailer = null;
@@ -341,7 +342,7 @@ const renderTicketPdfPage = ({
   const sessionTime = normalizeText(session?.sessionTime) || "";
   const bookingCode = normalizeText(booking?.bookingNumber) || "N/A";
   const bookingCreatedAt = formatDateTime(booking?.createdAt);
-  const seatLabel = `${ticket?.seat?.row || ""}${ticket?.seat?.col ?? ""}`;
+  const seatLabel = formatSeatLabel(ticket?.seat);
   const ticketCode = normalizeText(ticket?.code) || "-";
   const performedBy = normalizeEmail(customerEmail) || normalizeText(customerName) || "Client";
   const pageMargin = 24;
@@ -704,7 +705,7 @@ const buildTicketPdfAttachments = async ({
 
   return Promise.all(
     list.map(async (ticket, index) => {
-      const seatLabel = `${ticket?.seat?.row || ""}${ticket?.seat?.col ?? ""}`;
+      const seatLabel = formatSeatLabel(ticket?.seat);
       const pdfBuffer = await buildTicketPdfBuffer({
         booking,
         session,
@@ -745,12 +746,12 @@ const buildEmailHtml = ({
   const sessionTime = normalizeText(session?.sessionTime) || "";
   const safeTickets = Array.isArray(tickets) ? tickets : [];
   const seats = safeTickets
-    .map((ticket) => `${ticket?.seat?.row || ""}${ticket?.seat?.col ?? ""}`)
+    .map((ticket) => formatSeatLabel(ticket?.seat))
     .filter(Boolean)
     .join(", ");
   const ticketsHtml = safeTickets
     .map((ticket) => {
-      const seatLabel = `${ticket?.seat?.row || ""}${ticket?.seat?.col ?? ""}` || "-";
+      const seatLabel = formatSeatLabel(ticket?.seat) || "-";
       const pricingName = normalizeText(ticket?.pricingName) || "Tarif";
       const ticketCode = normalizeText(ticket?.code) || "-";
       return `
@@ -1057,7 +1058,7 @@ const buildTicketPdfDownload = async ({ ticketId, customerId } = {}) => {
     totalTickets: 1,
   });
 
-  const seatLabel = `${ticketForPdf?.seat?.row || ""}${ticketForPdf?.seat?.col ?? ""}`;
+  const seatLabel = formatSeatLabel(ticketForPdf?.seat);
   const bookingToken = toSafeFileToken(context.booking?.bookingNumber, "booking");
   const seatToken = toSafeFileToken(seatLabel, "seat");
   const ticketCodeToken = toSafeFileToken(ticketForPdf?.code, "ticket");

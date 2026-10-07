@@ -1,5 +1,6 @@
 const ticketService = require("../services/ticketService");
 const { hasDashboardPermission } = require("../config/dashboardPermissions");
+const { formatSeatLabel } = require("../utils/seatNumbers");
 const {
   formatCurrency,
   formatDate,
@@ -30,10 +31,7 @@ const listTickets = async (req, res) => {
 };
 
 const formatSeat = (seat) => {
-  if (!seat) {
-    return "";
-  }
-  return `${seat.row || ""}${seat.col ?? ""}`;
+  return formatSeatLabel(seat);
 };
 
 const formatSession = (session) => {

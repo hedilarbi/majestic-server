@@ -1,4 +1,111 @@
 const subscriptionSalesService = require("../services/subscriptionSalesService");
+const SubscriptionSale = require("../models/SubscriptionSale");
+
+const extractSubscriptionCode = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  try {
+    const parsed = JSON.parse(raw);
+    const nested = parsed?.subscriptionCode || parsed?.code || parsed?.value;
+    if (nested) return String(nested).trim().toUpperCase();
+  } catch (_error) {
+    // The QR usually contains the subscription code directly.
+  }
+
+  try {
+    const url = new URL(raw);
+    const queryCode =
+      url.searchParams.get("subscriptionCode") || url.searchParams.get("code");
+    if (queryCode) return queryCode.trim().toUpperCase();
+  } catch (_error) {
+    // Not a URL.
+  }
+
+  const match = raw.toUpperCase().match(/AB-[A-Z0-9-]+/);
+  return (match?.[0] || raw).replace(/\s+/g, "").toUpperCase();
+};
+
+const getSubscriptionScanChannel = async (req, res) => {
+  if (req.user?.role !== "ticket_office") {
+    return res.status(403).json({ message: "Accès guichet requis" });
+  }
+
+  return res.status(200).json({
+    channel: `guichet-${req.user.sub}`,
+  });
+};
+
+const scanSubscriptionSale = async (req, res) => {
+  try {
+    if (req.user?.role !== "ticket_office") {
+      return res.status(403).json({ message: "Accès guichet requis" });
+    }
+
+    const subscriptionCode = extractSubscriptionCode(
+      req.body?.qrText || req.body?.subscriptionCode,
+    );
+    if (!subscriptionCode) {
+      return res.status(400).json({ message: "QR abonnement invalide." });
+    }
+
+    const sale = await SubscriptionSale.findOne({ subscriptionCode })
+      .populate(
+        "subscriptionId",
+        "name allowedSeatType maxSeatsPerSession expirationDate isActive",
+      )
+      .populate("userId", "firstName lastName email")
+      .lean();
+
+    if (!sale) {
+      return res.status(404).json({ message: "Abonnement introuvable." });
+    }
+
+    const now = new Date();
+    const expiresAt = sale.expiresAt || sale.subscriptionId?.expirationDate || null;
+    let invalidReason = "";
+    if (sale.status !== "confirmed" || sale.paymentStatus !== "completed") {
+      invalidReason = "Cet abonnement n'est pas confirmé.";
+    } else if (sale.subscriptionId?.isActive === false) {
+      invalidReason = "Cette offre d'abonnement est désactivée.";
+    } else if (expiresAt && new Date(expiresAt) < now) {
+      invalidReason = "Cet abonnement est expiré.";
+    } else if (Number(sale.remainingCredits || 0) <= 0) {
+      invalidReason = "Cet abonnement ne possède plus de crédits.";
+    }
+
+    const result = {
+      subscriptionSaleId: String(sale._id),
+      subscriptionCode: sale.subscriptionCode,
+      subscriptionName: sale.subscriptionId?.name || "Abonnement Majestic",
+      customerName: [
+        sale.customerContact?.firstName || sale.userId?.firstName,
+        sale.customerContact?.lastName || sale.userId?.lastName,
+      ]
+        .filter(Boolean)
+        .join(" ") || sale.customerContact?.email || sale.userId?.email || "",
+      remainingCredits: Number(sale.remainingCredits || 0),
+      expiresAt,
+      allowedSeatType:
+        sale.subscriptionId?.allowedSeatType || sale.allowedSeatType || "normale",
+      maxSeatsPerSession:
+        sale.subscriptionId?.maxSeatsPerSession || sale.maxSeatsPerSession || 1,
+      isValid: !invalidReason,
+      invalidReason,
+      scannedAt: now.toISOString(),
+    };
+
+    req.io
+      ?.to(`guichet-${req.user.sub}`)
+      .emit("subscription-scanned", result);
+
+    return res.status(200).json(result);
+  } catch (error) {
+    return res
+      .status(error.status || 500)
+      .json({ message: error.message || "Impossible de lire l'abonnement." });
+  }
+};
 const {
   formatCurrency,
   formatDateTime,
@@ -191,4 +298,6 @@ module.exports = {
   exportSubscriptionSales,
   listMySubscriptionSales,
   createSubscriptionSale,
+  getSubscriptionScanChannel,
+  scanSubscriptionSale,
 };

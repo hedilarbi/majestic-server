@@ -29,6 +29,8 @@ const ticketSchema = new mongoose.Schema(
     seat: {
       row: { type: String, required: true },
       col: { type: Number, required: true },
+      // Seat number shown to people (aisles not counted), see utils/seatNumbers
+      number: { type: Number },
     },
     pricingName: {
       type: String,

@@ -5,6 +5,7 @@ const Booking = require("../models/Booking");
 const SeatLock = require("../models/SeatLock");
 const SeatReservation = require("../models/SeatReservation");
 const { seatKey } = require("../utils/seatKey");
+const { buildSeatNumberMap, getSeatNumber } = require("../utils/seatNumbers");
 const {
   resolveRoom,
   buildOverrideMap,
@@ -156,6 +157,8 @@ const getSeatMap = async (sessionId, currentUserId) => {
   );
   const roomPricingOverrides = buildPricingOverrideMap(room.pricingOverrides);
 
+  const seatNumberMap = buildSeatNumberMap(room.layout);
+
   const seatMap = (room.layout || []).map((cell) => {
     const key = seatKey(cell.row, cell.col);
     if (cell.cellType === "couloir") {
@@ -186,12 +189,20 @@ const getSeatMap = async (sessionId, currentUserId) => {
     return {
       row: cell.row,
       col: cell.col,
+      number: seatNumberMap.get(key) ?? null,
       cellType: cell.cellType,
       status,
       isBookable: status === "available",
       pricingOverrideId
     };
   });
+
+  if (myReservation) {
+    myReservation.seats = myReservation.seats.map((seat) => ({
+      ...seat,
+      number: getSeatNumber(seatNumberMap, seat)
+    }));
+  }
 
   return {
     session,
