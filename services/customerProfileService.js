@@ -339,7 +339,13 @@ const listCustomerSubscriptionSales = async ({ tokenPayload, page, limit }) => {
     limit,
   );
 
-  const query = buildSubscriptionSaleQuery(customer);
+  // Each online attempt creates its own sale: hide refused payments and
+  // attempts still waiting for payment (abandoned), they are not subscriptions.
+  // Filtering out rather than requiring "completed" keeps older confirmed sales.
+  const query = {
+    ...buildSubscriptionSaleQuery(customer),
+    $nor: [{ paymentStatus: "failed" }, { status: "pending" }],
+  };
   const [total, items] = await Promise.all([
     SubscriptionSale.countDocuments(query),
     SubscriptionSale.find(query)
