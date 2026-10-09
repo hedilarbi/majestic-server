@@ -53,6 +53,7 @@ router.post("/verify", async (req, res) => {
         seanceId: entity.sessionId,
         bookingId: type === "booking" ? entity._id : null,
         saleId: type === "subscription" ? entity._id : null,
+        subscriptionId: type === "subscription" ? entity.subscriptionId : null,
       });
     }
 
@@ -115,7 +116,10 @@ router.post("/verify", async (req, res) => {
       return res.status(400).json({ 
         status: "failed", 
         message: verification.actionCodeDescription || "Le paiement a échoué.",
-        seanceId: entity.sessionId
+        type,
+        seanceId: entity.sessionId,
+        // Lets the client send the customer back to the page they paid from
+        subscriptionId: type === "subscription" ? entity.subscriptionId : null,
       });
     }
   } catch (error) {
