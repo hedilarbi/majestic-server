@@ -2,9 +2,8 @@ const fs = require("fs");
 const path = require("path");
 
 const EmailVerification = require("../models/EmailVerification");
+const { getMailFrom, getMailTransport } = require("../utils/mailer");
 
-let cachedTransporter = null;
-let cachedNodemailer = null;
 let cachedLogoAttachment = undefined;
 
 const queue = [];
@@ -56,14 +55,6 @@ const getRetryDelayMs = (attempt) => {
   return baseDelay * Math.max(attempt, 1);
 };
 
-const getNodemailer = () => {
-  if (cachedNodemailer) {
-    return cachedNodemailer;
-  }
-  cachedNodemailer = require("nodemailer");
-  return cachedNodemailer;
-};
-
 const getLogoAttachment = () => {
   if (cachedLogoAttachment !== undefined) {
     return cachedLogoAttachment;
@@ -98,52 +89,6 @@ const getLogoAttachment = () => {
 
   cachedLogoAttachment = null;
   return cachedLogoAttachment;
-};
-
-const getTransporter = () => {
-  if (cachedTransporter) {
-    return cachedTransporter;
-  }
-
-  const user =
-    normalizeText(process.env.SMTP_USER) ||
-    normalizeText(process.env.EMAIL_SMTP_USER) ||
-    normalizeText(process.env.GMAIL_USER);
-  const pass =
-    normalizeText(process.env.SMTP_PASS) ||
-    normalizeText(process.env.EMAIL_SMTP_PASS) ||
-    normalizeText(process.env.GMAIL_APP_PASSWORD);
-
-  if (!user || !pass) {
-    const error = new Error(
-      "SMTP credentials missing. Set SMTP_USER and SMTP_PASS (or GMAIL_APP_PASSWORD).",
-    );
-    error.status = 500;
-    error.code = "SMTP_CONFIG_MISSING";
-    throw error;
-  }
-
-  const nodemailer = getNodemailer();
-  const host = normalizeText(process.env.SMTP_HOST);
-  const port = toPositiveInt(process.env.SMTP_PORT, 587);
-  const secureFlag = String(process.env.SMTP_SECURE || "")
-    .trim()
-    .toLowerCase();
-  const secure = secureFlag ? secureFlag === "true" : port === 465;
-
-  cachedTransporter = host
-    ? nodemailer.createTransport({
-        host,
-        port,
-        secure,
-        auth: { user, pass },
-      })
-    : nodemailer.createTransport({
-        service: "gmail",
-        auth: { user, pass },
-      });
-
-  return cachedTransporter;
 };
 
 const formatDateTime = (value) => {
@@ -289,21 +234,8 @@ const sendCustomerOtpEmail = async ({ verificationId }) => {
     return { skipped: true, reason: "missing_recipient" };
   }
 
-  const transporter = getTransporter();
-  const smtpUser =
-    normalizeEmail(process.env.SMTP_USER) ||
-    normalizeEmail(process.env.EMAIL_SMTP_USER) ||
-    normalizeEmail(process.env.GMAIL_USER);
-  const fromAddress =
-    normalizeEmail(process.env.OTP_EMAIL_FROM) ||
-    normalizeEmail(process.env.TICKETS_EMAIL_FROM) ||
-    smtpUser;
-
-  if (!fromAddress) {
-    const error = new Error("OTP email from address is missing");
-    error.status = 500;
-    throw error;
-  }
+  const transporter = getMailTransport("noreply");
+  const fromAddress = getMailFrom("noreply");
 
   const copy = resolvePurposeCopy(verification.purpose);
   const logoAttachment = getLogoAttachment();

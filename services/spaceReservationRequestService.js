@@ -4,8 +4,13 @@ const SpaceReservationRequest = require("../models/SpaceReservationRequest");
 const {
   createSpaceReservationRequestNotification,
 } = require("./dashboardNotificationService");
+const { getMailFrom, getMailTransport } = require("../utils/mailer");
 
-const ALLOWED_ESTABLISHMENT_TYPES = new Set(["association", "organisation"]);
+const ALLOWED_ESTABLISHMENT_TYPES = new Set([
+  "association",
+  "organisation",
+  "particulier",
+]);
 
 const normalizeString = (value) => {
   if (typeof value !== "string") {
@@ -182,29 +187,8 @@ const replyToSpaceReservationRequest = async (id, { subject, message }) => {
     throw buildError("Adresse email du demandeur introuvable.", 404);
   }
 
-  // Lazy-load nodemailer (same pattern as other email services)
-  const nodemailer = require("nodemailer");
-
-  const smtpUser =
-    (process.env.SMTP_USER || process.env.EMAIL_SMTP_USER || process.env.GMAIL_USER || "").trim();
-  const smtpPass =
-    (process.env.SMTP_PASS || process.env.EMAIL_SMTP_PASS || process.env.GMAIL_APP_PASSWORD || "").trim();
-
-  if (!smtpUser || !smtpPass) {
-    throw buildError("Configuration email manquante (SMTP_USER / SMTP_PASS).", 500);
-  }
-
-  const host = (process.env.SMTP_HOST || "").trim();
-  const port = parseInt(process.env.SMTP_PORT, 10) || 587;
-  const secureFlag = String(process.env.SMTP_SECURE || "").trim().toLowerCase();
-  const secure = secureFlag ? secureFlag === "true" : port === 465;
-
-  const transporter = host
-    ? nodemailer.createTransport({ host, port, secure, auth: { user: smtpUser, pass: smtpPass } })
-    : nodemailer.createTransport({ service: "gmail", auth: { user: smtpUser, pass: smtpPass } });
-
-  const fromAddress =
-    (process.env.OTP_EMAIL_FROM || process.env.TICKETS_EMAIL_FROM || smtpUser).trim();
+  const transporter = getMailTransport("contact");
+  const fromAddress = getMailFrom("contact");
   const fullName = `${item.firstName || ""} ${item.lastName || ""}`.trim();
 
   const htmlBody = `

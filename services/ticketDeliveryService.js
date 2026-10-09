@@ -6,9 +6,8 @@ const Booking = require("../models/Booking");
 const Ticket = require("../models/Ticket");
 const Room = require("../models/Room");
 const { formatSeatLabel } = require("../utils/seatNumbers");
+const { getMailFrom, getMailTransport } = require("../utils/mailer");
 
-let cachedTransporter = null;
-let cachedNodemailer = null;
 let cachedPdfKit = null;
 let cachedQrCode = null;
 let cachedLogoAttachment = undefined;
@@ -42,14 +41,6 @@ const getMaxAttempts = () =>
 const getRetryDelayMs = (attempt) => {
   const baseDelay = toPositiveInt(process.env.TICKETS_EMAIL_RETRY_DELAY_MS, 8000);
   return baseDelay * Math.max(attempt, 1);
-};
-
-const getNodemailer = () => {
-  if (cachedNodemailer) {
-    return cachedNodemailer;
-  }
-  cachedNodemailer = require("nodemailer");
-  return cachedNodemailer;
 };
 
 const getPdfKit = () => {
@@ -108,52 +99,6 @@ const getLogoAttachment = () => {
 
   cachedLogoAttachment = null;
   return cachedLogoAttachment;
-};
-
-const getTransporter = () => {
-  if (cachedTransporter) {
-    return cachedTransporter;
-  }
-
-  const user =
-    normalizeText(process.env.SMTP_USER) ||
-    normalizeText(process.env.EMAIL_SMTP_USER) ||
-    normalizeText(process.env.GMAIL_USER);
-  const pass =
-    normalizeText(process.env.SMTP_PASS) ||
-    normalizeText(process.env.EMAIL_SMTP_PASS) ||
-    normalizeText(process.env.GMAIL_APP_PASSWORD);
-
-  if (!user || !pass) {
-    const error = new Error(
-      "SMTP credentials missing. Set SMTP_USER and SMTP_PASS (or GMAIL_APP_PASSWORD).",
-    );
-    error.status = 500;
-    error.code = "SMTP_CONFIG_MISSING";
-    throw error;
-  }
-
-  const nodemailer = getNodemailer();
-  const host = normalizeText(process.env.SMTP_HOST);
-  const port = toPositiveInt(process.env.SMTP_PORT, 587);
-  const secureFlag = String(process.env.SMTP_SECURE || "")
-    .trim()
-    .toLowerCase();
-  const secure = secureFlag ? secureFlag === "true" : port === 465;
-
-  cachedTransporter = host
-    ? nodemailer.createTransport({
-        host,
-        port,
-        secure,
-        auth: { user, pass },
-      })
-    : nodemailer.createTransport({
-        service: "gmail",
-        auth: { user, pass },
-      });
-
-  return cachedTransporter;
 };
 
 const formatDate = (value) => {
@@ -954,14 +899,8 @@ const sendBookingTicketsEmail = async ({ bookingId }) => {
     return { sent: false, skipped: true, reason: "NO_RECIPIENT_EMAIL" };
   }
 
-  const transporter = getTransporter();
-  const smtpUser =
-    normalizeText(process.env.SMTP_USER) ||
-    normalizeText(process.env.EMAIL_SMTP_USER) ||
-    normalizeText(process.env.GMAIL_USER);
-  const fromName = normalizeText(process.env.TICKETS_EMAIL_FROM_NAME) || "Majestic";
-  const fromAddress = normalizeEmail(process.env.TICKETS_EMAIL_FROM) || smtpUser;
-  const from = fromAddress ? `"${fromName}" <${fromAddress}>` : fromName;
+  const transporter = getMailTransport("tickets");
+  const from = getMailFrom("tickets");
 
   const emailAssets = await buildEmailAttachments({
     booking: context.booking,
